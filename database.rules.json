@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "events": {
+      "$event": {
+        "assignments": {
+          ".read": true,
+          ".write": true,
+          "$id": {
+            ".validate": "newData.hasChildren(['discord','type','ts'])"
+          }
+        }
+      }
+    }
+  }
+}

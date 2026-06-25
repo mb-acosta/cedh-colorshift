@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Commander Wheel</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎡</text></svg>" />
+</head>
+<body>
+  <header>
+    <h1>🎡 Commander Wheel</h1>
+    <div id="status" class="status">connecting…</div>
+  </header>
+
+  <div id="adminBar" class="admin-bar" style="display:none">
+    <span>🔧 Admin mode</span>
+    <button id="resetBtn" class="danger">Reset all assignments</button>
+  </div>
+
+  <main>
+    <section class="wheel-col">
+      <div class="name-row">
+        <input id="discord" type="text" placeholder="Your Discord name" autocomplete="off" maxlength="40" />
+      </div>
+
+      <h2 id="wheelTitle" class="wheel-title">Main Wheel</h2>
+
+      <div class="wheel-wrap">
+        <div class="pointer"></div>
+        <canvas id="wheel" width="560" height="560"></canvas>
+      </div>
+
+      <button id="spinBtn" class="spin">SPIN</button>
+      <div id="result" class="result"></div>
+      <div id="stats" class="stats"></div>
+    </section>
+
+    <section class="results-col">
+      <h2>Assignments <span class="badge" id="resultsCount">0</span></h2>
+      <ul id="results" class="results"></ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>Land on a commander → it leaves the wheel. Land on <b>PARTNER</b> → spin the partner wheel twice for a pair. Each exact partner combo can only be claimed once.</p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
