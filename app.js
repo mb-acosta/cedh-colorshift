@@ -7,13 +7,15 @@ import {
 
 // ───────────────────────────── Config ─────────────────────────────
 // How likely is the wheel to land on "PARTNER" vs a single commander?
+//   0–1      -> target probability (e.g. 0.15 = ~15%). Weight is recomputed
+//               each build so the ratio stays constant as singles are claimed.
 //   "cards"  -> proportional to the number of partner CARDS in play (25)
 //               vs available single cards (71). Partner odds start ~26%.
 //   "combos" -> proportional to the number of partner COMBOS still open
 //               (up to 300) vs single cards. Makes partners land ~80% of
 //               the time early on. Pick this for a partner-heavy draft.
 //   <number> -> a fixed weight (e.g. 30) for the whole PARTNER slice.
-const PARTNER_ODDS = "cards";
+const PARTNER_ODDS = 0.20;
 
 // ──────────────────────────── Data split ──────────────────────────
 const SINGLES = COMMANDERS.filter((c) => !c.partner);
@@ -42,6 +44,7 @@ let db, assignmentsRef;
 let assignments = {};            // live mirror of the DB
 let usedSingles = new Set();     // single commander names already taken
 let usedCombos = new Set();      // partner combo keys already taken
+let usedDiscords = new Set();    // discord names (lowercase) already assigned
 let firebaseReady = false;
 
 function initFirebase() {
@@ -75,10 +78,12 @@ function initFirebase() {
 function recomputeUsed() {
   usedSingles = new Set();
   usedCombos = new Set();
+  usedDiscords = new Set();
   for (const id in assignments) {
     const a = assignments[id];
     if (a.type === "single") usedSingles.add(a.name);
     else if (a.type === "partner") usedCombos.add(comboKey(a.partnerA, a.partnerB));
+    if (a.discord) usedDiscords.add(a.discord.toLowerCase());
   }
 }
 
@@ -105,7 +110,12 @@ function partnerSliceWeight() {
   if (openComboCount() === 0) return 0;
   if (PARTNER_ODDS === "cards") return partnersInPlay().length;
   if (PARTNER_ODDS === "combos") return openComboCount();
-  return Number(PARTNER_ODDS) || 0;
+  const n = Number(PARTNER_ODDS);
+  if (n > 0 && n < 1) {
+    // dynamic ratio: pw / (singles + pw) = n  →  pw = singles × n/(1-n)
+    return availableSingles().length * (n / (1 - n));
+  }
+  return n || 0;
 }
 
 // ───────────────────────────── Wheel ──────────────────────────────
@@ -275,13 +285,14 @@ function commit(entry, isFree) {
   return runTransaction(assignmentsRef, (current) => {
     current = current || {};
     // rebuild used sets from the freshest server data
-    const uS = new Set(), uC = new Set();
+    const uS = new Set(), uC = new Set(), uD = new Set();
     for (const id in current) {
       const a = current[id];
       if (a.type === "single") uS.add(a.name);
       else if (a.type === "partner") uC.add(comboKey(a.partnerA, a.partnerB));
+      if (a.discord) uD.add(a.discord.toLowerCase());
     }
-    if (!isFree(uS, uC)) return; // abort — someone else took it
+    if (!isFree(uS, uC, uD)) return; // abort — commander or discord already taken
     current[key] = entry;
     return current;
   }).then((res) => ({ committed: res.committed }));
@@ -308,6 +319,10 @@ function showResult(html, kind) {
 function nameOk() {
   const v = $("discord").value.trim();
   if (!v) { showResult("Enter your Discord name first ☝️", "err"); return null; }
+  if (usedDiscords.has(v.toLowerCase())) {
+    showResult(`⚠️ <b>${escapeHtml(v)}</b> already has a commander — check the list!`, "err");
+    return null;
+  }
   return v;
 }
 
@@ -339,7 +354,7 @@ async function onSpin() {
       const c = w.payload;
       const ok = await commit(
         { discord: name, type: "single", name: c.name, back: c.back || null, ts: Date.now() },
-        (uS) => !uS.has(c.name),
+        (uS, uC, uD) => !uS.has(c.name) && !uD.has(name.toLowerCase()),
       );
       if (ok.committed) {
         const flip = c.back ? ` <span class="flip">// ${c.back}</span>` : "";
@@ -389,7 +404,7 @@ async function onSpin() {
     const b = w.payload.name;
     const ok = await commit(
       { discord: name, type: "partner", partnerA, partnerB: b, ts: Date.now() },
-      (uS, uC) => !uC.has(comboKey(partnerA, b)),
+      (uS, uC, uD) => !uC.has(comboKey(partnerA, b)) && !uD.has(name.toLowerCase()),
     );
     if (ok.committed) {
       showResult(`<div class="cards">${cardsForName(partnerA, "big")}${cardsForName(b, "big")}</div>` +

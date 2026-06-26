@@ -26,13 +26,13 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 export const firebaseConfig = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  databaseURL: "https://REPLACE_ME-default-rtdb.firebaseio.com",
-  projectId: "REPLACE_ME",
-  storageBucket: "REPLACE_ME.appspot.com",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME",
+  apiKey: "AIzaSyCzuUDGAEqpCnL_vjzTB9yUM6EaaYTUJWg",
+  authDomain: "commander-wheel.firebaseapp.com",
+  databaseURL: "https://commander-wheel-default-rtdb.firebaseio.com",
+  projectId: "commander-wheel",
+  storageBucket: "commander-wheel.firebasestorage.app",
+  messagingSenderId: "323975412313",
+  appId: "1:323975412313:web:1fed7f7f16ac4f8d4c4f48"
 };
 
 // Optional: a shared "event" name so you can run multiple drafts without them
