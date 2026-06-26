@@ -430,11 +430,11 @@ export const COMMANDERS = [
     "backImg": null
   },
   {
-    "name": "Ral, Leyline Prodigy (Ral Back)",
-    "back": "Ral, Monsoon Mage (Ral Front)",
+    "name": "Ral, Monsoon Mage (Ral Front)",
+    "back": "Ral, Leyline Prodigy (Ral Back)",
     "partner": false,
-    "img": "1-Sy-ySBcOLpT44puXm5Sr3dimtjpZ34Z",
-    "backImg": "11I3aMpKGIOyxpiFZqCHoNBtzeUEztEIv"
+    "img": "11I3aMpKGIOyxpiFZqCHoNBtzeUEztEIv",
+    "backImg": "1-Sy-ySBcOLpT44puXm5Sr3dimtjpZ34Z"
   },
   {
     "name": "Raph & Mikey, Troublemakers",
