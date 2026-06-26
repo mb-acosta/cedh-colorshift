@@ -19,8 +19,9 @@ Hosts for free on GitHub Pages.
 
 | File | What it is |
 |------|------------|
-| `index.html` | The page |
+| `index.html` | The wheel page |
 | `app.js` | All the logic (wheel, weighting, partner pairing, DB writes) |
+| `gallery.html` / `gallery.js` | A static **Card reference** page — every commander's art in alphabetical order (front + back), with a search box. No Firebase needed. |
 | `styles.css` | Styling |
 | `commanders.js` | The commander list + card-art Google Drive IDs (auto-generated from `Commander list.xlsx`) |
 | `firebase-config.js` | **You edit this** — your Firebase keys |
@@ -82,6 +83,9 @@ The included `.nojekyll` file makes sure GitHub Pages serves everything as-is.
   partner combo); the real pool and the assignments list are untouched.
 - The **Assignments** panel updates live on every device.
 - It also works if one person drives a single shared screen — same result.
+- **📖 Card reference** (link in the header, or open `gallery.html`) shows every
+  commander's art in alphabetical order — flip cards include both faces — with a
+  search box. It's read-only and needs no login or Firebase.
 
 ### Accounts
 
