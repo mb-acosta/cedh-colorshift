@@ -38,7 +38,7 @@ function render(filter = "") {
     const faces = face(c.img, c.name) + (c.backImg ? face(c.backImg, c.back || c.name) : "");
     const flip = c.back ? `<span class="g-flip">// ${escapeHtml(c.back)}</span>` : "";
     const tag = c.partner ? `<span class="g-tag">🤝 partner</span>` : "";
-    return `<li class="g-item">` +
+    return `<li class="g-item${c.backImg ? " flip" : ""}">` +
       `<div class="g-faces">${faces}</div>` +
       `<div class="g-name">${escapeHtml(c.name)}${flip}${tag}</div>` +
       `</li>`;

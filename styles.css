@@ -205,7 +205,10 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 }
 .nav-link:hover { background: rgba(231,193,74,.12); }
 
-.gallery-main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px; }
+/* Override the wheel page's `main { display:grid; max-width:1100px }` rule so the
+   gallery is a full-width block (otherwise it gets trapped in the wheel's narrow
+   ~380px second column). Then the card grid below can span the whole viewport. */
+.gallery-main { display: block; max-width: none; margin: 0; padding: 20px clamp(16px, 3vw, 44px) 60px; }
 .gallery-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
 #gallerySearch {
   flex: 1 1 240px; max-width: 360px; padding: 10px 14px; font-size: 1rem; border-radius: 10px;
@@ -216,19 +219,41 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 
 .gallery {
   list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 18px;
+  display: grid; gap: 18px; align-items: start;
+  grid-template-columns: repeat(2, 1fr);
 }
+/* Fixed column count per breakpoint: every track is 1fr so cells stay uniform
+   and fill the row, while each card = (width ÷ columns) — so they grow/shrink
+   fluidly with the window and step up a column as the screen gets wider. */
+@media (min-width: 640px)  { .gallery { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 960px)  { .gallery { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1280px) { .gallery { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 1600px) { .gallery { grid-template-columns: repeat(6, 1fr); } }
+@media (min-width: 1920px) { .gallery { grid-template-columns: repeat(7, 1fr); } }
+@media (min-width: 2300px) { .gallery { grid-template-columns: repeat(8, 1fr); } }
 .g-item {
   background: var(--panel); border: 1px solid rgba(255,255,255,.06);
-  border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; align-items: center;
+  border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; align-items: center;
+  min-width: 0;   /* let the cell shrink to its grid track instead of the image's intrinsic width */
 }
-.g-faces { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+/* One card per cell = a clean, uniform grid. Flip cards take a double-wide cell
+   so both faces sit side-by-side at the same size as a single card, keeping
+   every row a uniform height. */
+.g-item.flip { grid-column: span 2; }
+.g-faces { width: 100%; display: grid; grid-template-columns: 1fr; gap: 10px; justify-items: center; }
+.g-item.flip .g-faces { grid-template-columns: 1fr 1fr; }
 .g-card {
-  width: 140px; max-width: 100%; border-radius: 8px;
+  width: 100%; min-width: 0; height: auto; border-radius: 10px; position: relative;
   box-shadow: 0 4px 14px rgba(0,0,0,.5); background: var(--panel2); display: block;
 }
 .g-card.broken { display: none; }
-.g-name { font-size: .85rem; text-align: center; word-break: break-word; line-height: 1.4; }
+.g-name { font-size: .9rem; text-align: center; word-break: break-word; line-height: 1.4; }
 .g-flip { color: var(--muted); font-size: .85em; display: block; }
-.g-tag { color: var(--gold); font-size: .72rem; display: block; margin-top: 2px; }
+.g-tag { color: var(--gold); font-size: .74rem; display: block; margin-top: 2px; }
 .g-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 30px; }
+
+/* Hover-to-zoom — only on devices with a real pointer (mouse), i.e. PC. */
+@media (hover: hover) and (pointer: fine) {
+  .g-card { transition: transform .18s ease, box-shadow .18s ease; cursor: zoom-in; }
+  .g-card:hover { transform: scale(1.35); z-index: 20; box-shadow: 0 16px 44px rgba(0,0,0,.75); }
+}
