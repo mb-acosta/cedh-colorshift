@@ -59,7 +59,7 @@ let firebaseReady = false;
 // ── Auth / scope state (see blocked()) ──
 let currentUser = null;          // { username, key } when logged in
 let guestSeq = false;            // is the in-progress spin sequence a guest roll?
-let scope = "personal";          // "personal" = also exclude my past results; "global" = pool-wide only
+let scope = "personal";          // "personal" = exclude my past results too; "all" = nothing filtered (guest)
 
 // ── Admin ownership ──
 // Admin status is derived: you're admin iff logged in as the claimed owner
@@ -67,6 +67,7 @@ let scope = "personal";          // "personal" = also exclude my past results; "
 // by anyone who stumbles on the URL.
 let adminOwnerKey = null;        // userKey of the admin account (null = unclaimed)
 let adminWired = false;          // admin button listeners attached only once
+let registeredKeys = new Set();  // userKeys that have a registered account (loaded in admin)
 const LS_ADMIN = "cw_admin_owner"; // local-preview fallback store
 
 function initFirebase() {
@@ -133,9 +134,12 @@ function recomputeUsed() {
 // The wheel filter. Returns the sets of singles / combos that are NOT
 // rollable right now: pool-wide claimed ones always, plus — when scope is
 // "personal" and someone is logged in — that player's own past results
-// (per-exact-result, accumulated by "Store event & reset pool"). Guest rolls
-// and the logged-out view use scope "global" so they see the whole pool.
+// (per-exact-result, accumulated by "Store event & reset pool"). The logged-out
+// view falls through to pool-wide-only; guest rolls use "all" (nothing filtered).
 function blocked() {
+  // Guest rolls ("all"): nothing is filtered — the whole commander list /
+  // every partner combo is in play, even ones already claimed (just for fun).
+  if (scope === "all") return { s: new Set(), c: new Set() };
   const s = new Set(usedSingles);
   const c = new Set(usedCombos);
   if (scope === "personal" && currentUser) {
@@ -529,15 +533,15 @@ function renderResults() {
       `<button class="remove-btn" data-key="${key}" title="Remove assignment">✕</button>`
     : "";
   $("results").innerHTML = list.map(([key, a]) => {
-    const who = escapeHtml(a.discord || "?");
+    const whoHtml = `<span class="who">${escapeHtml(a.discord || "?")}${isAdmin ? acctBadge(a.discord) : ""}</span>`;
     if (a.type === "single") {
       const flip = a.back ? `<span class="flip"> // ${escapeHtml(a.back)}</span>` : "";
       return `<li><div class="thumbs">${cardsForName(a.name, "thumb")}</div>` +
-        `<div class="info"><span class="who">${who}</span>` +
+        `<div class="info">${whoHtml}` +
         `<span class="got">${escapeHtml(a.name)}${flip}</span></div>${removeBtn(key)}</li>`;
     }
     return `<li><div class="thumbs">${cardsForName(a.partnerA, "thumb")}${cardsForName(a.partnerB, "thumb")}</div>` +
-      `<div class="info"><span class="who">${who}</span>` +
+      `<div class="info">${whoHtml}` +
       `<span class="got partner">${escapeHtml(a.partnerA)} <b>+</b> ${escapeHtml(a.partnerB)}</span></div>${removeBtn(key)}</li>`;
   }).join("");
 }
@@ -545,6 +549,16 @@ function renderResults() {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (m) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+
+// Admin-only badge: does a registered account exist for this assignment's name?
+// (Identity is the normalized name, so an unregistered result will attach
+// itself automatically once that person registers with the same username.)
+function acctBadge(discord) {
+  const has = registeredKeys.has(userKey(discord || ""));
+  return has
+    ? `<span class="acct yes" title="A registered account exists for this name">✓ account</span>`
+    : `<span class="acct no" title="No account yet — this result attaches automatically when they register with this name">no account</span>`;
 }
 
 // ──────────────────────────── Accounts ────────────────────────────
@@ -851,8 +865,10 @@ async function refreshUserList() {
   let users = {};
   if (db) { try { const snap = await get(usersRef); users = snap.val() || {}; } catch { /* ignore */ } }
   else { users = localUsers(); }
+  registeredKeys = new Set(Object.keys(users));   // node keys are userKeys
   const names = Object.values(users).map((u) => u && u.username).filter(Boolean).sort();
   $("userList").innerHTML = names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
+  renderResults();   // reflect account badges once the list has loaded
 }
 
 // Attach the admin button handlers once. The buttons live in the DOM always
@@ -925,7 +941,7 @@ function boot() {
   });
   $("guestBtn").addEventListener("click", () => {
     if (wheel.spinning || phase !== "main") return;
-    guestSeq = true; scope = "global";
+    guestSeq = true; scope = "all";   // roll across every commander, even claimed ones
     onSpin();
   });
   $("loginBtn").addEventListener("click", login);

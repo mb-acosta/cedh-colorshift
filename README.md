@@ -77,8 +77,9 @@ The included `.nojekyll` file makes sure GitHub Pages serves everything as-is.
 - Everyone opens the link, **registers** a simple account (Discord username +
   password — no email), and hits **SPIN**. Their result is saved to the shared
   list and tied to their account.
-- **Guest Spin** rolls for fun without an account and **never saves** anything —
-  the pool and the assignments list are untouched.
+- **Guest Spin** rolls for fun without an account and **never saves** anything.
+  It spins across **every commander — even ones already claimed** (single or
+  partner combo); the real pool and the assignments list are untouched.
 - The **Assignments** panel updates live on every device.
 - It also works if one person drives a single shared screen — same result.
 
@@ -144,6 +145,11 @@ The admin tools are:
 - **Manually assign a commander** — pick/type a username, choose a single or a
   partner pair, and assign it directly. Useful for hand-assigning or for
   re-attaching existing results to a player without anyone re-rolling.
+- **Account badge** — in the Assignments list, each result shows a small
+  **✓ account** (a registered account exists for that name) or **no account**
+  (nobody has registered that username yet). Handy for seeing which existing
+  results are already backed by a login. It refreshes when admin loads/acts; the
+  list reflects accounts known at that time.
 
 ---
 
