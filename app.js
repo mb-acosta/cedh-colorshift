@@ -2,7 +2,7 @@ import { COMMANDERS } from "./commanders.js";
 import { firebaseConfig, EVENT_ID } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getDatabase, ref, onValue, push, runTransaction,
+  getDatabase, ref, onValue, push, runTransaction, remove,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
 // ───────────────────────────── Config ─────────────────────────────
@@ -303,6 +303,7 @@ const $ = (id) => document.getElementById(id);
 let wheel;
 let phase = "main";   // main | partner1 | partner2
 let partnerA = null;
+let isAdmin = false;
 
 function setStatus(msg, kind) {
   const el = $("status");
@@ -439,23 +440,26 @@ function renderStats() {
 }
 
 function renderResults() {
-  const list = Object.values(assignments).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const list = Object.entries(assignments).sort(([, a], [, b]) => (b.ts || 0) - (a.ts || 0));
   $("resultsCount").textContent = list.length;
   if (list.length === 0) {
     $("results").innerHTML = `<li class="empty">No assignments yet — be the first to spin!</li>`;
     return;
   }
-  $("results").innerHTML = list.map((a) => {
+  const removeBtn = (key) => isAdmin
+    ? `<button class="remove-btn" data-key="${key}" title="Remove assignment">✕</button>`
+    : "";
+  $("results").innerHTML = list.map(([key, a]) => {
     const who = escapeHtml(a.discord || "?");
     if (a.type === "single") {
       const flip = a.back ? `<span class="flip"> // ${escapeHtml(a.back)}</span>` : "";
       return `<li><div class="thumbs">${cardsForName(a.name, "thumb")}</div>` +
         `<div class="info"><span class="who">${who}</span>` +
-        `<span class="got">${escapeHtml(a.name)}${flip}</span></div></li>`;
+        `<span class="got">${escapeHtml(a.name)}${flip}</span></div>${removeBtn(key)}</li>`;
     }
     return `<li><div class="thumbs">${cardsForName(a.partnerA, "thumb")}${cardsForName(a.partnerB, "thumb")}</div>` +
       `<div class="info"><span class="who">${who}</span>` +
-      `<span class="got partner">${escapeHtml(a.partnerA)} <b>+</b> ${escapeHtml(a.partnerB)}</span></div></li>`;
+      `<span class="got partner">${escapeHtml(a.partnerA)} <b>+</b> ${escapeHtml(a.partnerB)}</span></div>${removeBtn(key)}</li>`;
   }).join("");
 }
 
@@ -465,8 +469,23 @@ function escapeHtml(s) {
 }
 
 // ───────────────────────────── Admin ──────────────────────────────
+async function removeAssignment(key) {
+  const entry = assignments[key];
+  if (!entry) return;
+  if (!confirm(`Remove ${entry.discord}'s assignment?`)) return;
+  if (!firebaseReady) {
+    delete assignments[key];
+    recomputeUsed(); renderResults(); renderStats();
+    if (phase === "main" && !wheel.spinning) buildMainWheel();
+    return;
+  }
+  await remove(ref(db, `events/${EVENT_ID}/assignments/${key}`));
+  // onValue re-fires and updates everything
+}
+
 function setupAdmin() {
   if (location.hash !== "#admin") return;
+  isAdmin = true;
   $("adminBar").style.display = "flex";
   $("resetBtn").addEventListener("click", async () => {
     if (!confirm("Clear ALL assignments for this event? This cannot be undone.")) return;
@@ -484,6 +503,10 @@ function boot() {
   renderResults();
   $("spinBtn").addEventListener("click", onSpin);
   $("discord").addEventListener("keydown", (e) => { if (e.key === "Enter") onSpin(); });
+  $("results").addEventListener("click", (e) => {
+    const btn = e.target.closest(".remove-btn");
+    if (btn) removeAssignment(btn.dataset.key);
+  });
   setupAdmin();
   initFirebase();
   updateSpinButton();
