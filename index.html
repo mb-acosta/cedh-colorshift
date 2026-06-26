@@ -13,15 +13,49 @@
     <div id="status" class="status">connecting…</div>
   </header>
 
+  <div id="adminClaim" class="admin-claim" style="display:none">
+    <span>🔐 <span id="claimMsg"></span></span>
+    <button id="claimBtn">Make this account the admin</button>
+  </div>
+
   <div id="adminBar" class="admin-bar" style="display:none">
     <span>🔧 Admin mode</span>
+    <button id="storeResetBtn">📦 Store event &amp; reset pool</button>
     <button id="resetBtn" class="danger">Reset all assignments</button>
+  </div>
+
+  <div id="adminPanel" class="admin-panel" style="display:none">
+    <h3>Manually assign a commander</h3>
+    <div class="manual-form">
+      <input id="maUser" list="userList" placeholder="Discord username" autocomplete="off" maxlength="40" />
+      <datalist id="userList"></datalist>
+      <select id="maType">
+        <option value="single">Single</option>
+        <option value="partner">Partner pair</option>
+      </select>
+      <select id="maA"></select>
+      <select id="maB" style="display:none"></select>
+      <button id="maAssignBtn">Assign</button>
+    </div>
+    <div id="maMsg" class="auth-msg"></div>
+    <p class="admin-hint">“Store event &amp; reset” keeps every result, then refills the pool — players just can’t re-roll the exact result they already got. Use the <b>↻</b> button on a result to let someone spin again.</p>
   </div>
 
   <main>
     <section class="wheel-col">
-      <div class="name-row">
-        <input id="discord" type="text" placeholder="Your Discord name" autocomplete="off" maxlength="40" />
+      <div class="auth-row">
+        <div id="authLoggedOut" class="auth-form">
+          <input id="authUser" type="text" placeholder="Discord username" autocomplete="off" maxlength="40" />
+          <input id="authPass" type="password" placeholder="Password" autocomplete="current-password" maxlength="100" />
+          <button id="loginBtn">Log in</button>
+          <button id="registerBtn" class="secondary">Register</button>
+          <label class="remember"><input id="authRemember" type="checkbox" checked /> Remember me</label>
+        </div>
+        <div id="authLoggedIn" class="auth-logged-in" style="display:none">
+          <span>Logged in as <b id="whoami"></b></span>
+          <button id="logoutBtn" class="secondary">Log out</button>
+        </div>
+        <div id="authMsg" class="auth-msg"></div>
       </div>
 
       <h2 id="wheelTitle" class="wheel-title">Main Wheel</h2>
@@ -31,7 +65,11 @@
         <canvas id="wheel" width="560" height="560"></canvas>
       </div>
 
-      <button id="spinBtn" class="spin">SPIN</button>
+      <div class="spin-row">
+        <button id="spinBtn" class="spin">SPIN</button>
+        <button id="guestBtn" class="guest">🎲 Guest Spin</button>
+      </div>
+      <div class="guest-note">Guest Spin rolls just for fun — nothing is saved.</div>
       <div id="result" class="result"></div>
       <div id="stats" class="stats"></div>
     </section>
@@ -43,7 +81,7 @@
   </main>
 
   <footer>
-    <p>Land on a commander → it leaves the wheel. Land on <b>PARTNER</b> → spin the partner wheel twice for a pair. Each exact partner combo can only be claimed once.</p>
+    <p>Log in with a Discord name + password to spin and save your result, or use <b>Guest Spin</b> to roll for fun. Land on a commander → it leaves the wheel. Land on <b>PARTNER</b> → spin the partner wheel twice for a pair. Each exact partner combo can only be claimed once.</p>
   </footer>
 
   <script type="module" src="app.js"></script>

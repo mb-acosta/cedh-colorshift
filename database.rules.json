@@ -8,7 +8,29 @@
           "$id": {
             ".validate": "newData.hasChildren(['discord','type','ts'])"
           }
+        },
+        "history": {
+          ".read": true,
+          ".write": true
+        },
+        "archives": {
+          ".read": true,
+          ".write": true
         }
+      }
+    },
+    "users": {
+      ".read": true,
+      "$key": {
+        ".write": "!data.exists()",
+        ".validate": "newData.hasChildren(['username','salt','hash','iterations'])"
+      }
+    },
+    "admin": {
+      ".read": true,
+      "owner": {
+        ".write": "!data.exists()",
+        ".validate": "newData.isString()"
       }
     }
   }

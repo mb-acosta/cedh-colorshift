@@ -2,7 +2,7 @@ import { COMMANDERS } from "./commanders.js";
 import { firebaseConfig, EVENT_ID } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getDatabase, ref, onValue, push, runTransaction, remove,
+  getDatabase, ref, onValue, push, runTransaction, remove, update, get,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
 // ───────────────────────────── Config ─────────────────────────────
@@ -23,6 +23,14 @@ const PARTNERS = COMMANDERS.filter((c) => c.partner);
 const comboKey = (a, b) => [a, b].sort().join("  ||  ");
 const NAME_MAP = new Map(COMMANDERS.map((c) => [c.name, c]));
 
+// Firebase keys forbid  . $ # [ ] /  and control chars. encodeURIComponent
+// handles all of those except ".", which we escape too. Used for account keys
+// and for storing commander names / combo keys as history child-keys.
+const encKey = (s) => encodeURIComponent(String(s)).replace(/\./g, "%2E");
+// A person's stable identity = their lowercased Discord name. Old free-text
+// spins already used this as `discord`, so accounts line up with past results.
+const userKey = (name) => encKey(String(name).trim().toLowerCase());
+
 // Google Drive image embedding (the thumbnail endpoint is the reliable one for
 // public files). Cards must be shared "Anyone with the link".
 // drive.google.com/thumbnail redirects here; using it directly skips a hop.
@@ -40,15 +48,29 @@ function cardsForName(name, cls) {
 }
 
 // ───────────────────────────── Firebase ───────────────────────────
-let db, assignmentsRef;
+let db, assignmentsRef, historyRef, usersRef;
 let assignments = {};            // live mirror of the DB
-let usedSingles = new Set();     // single commander names already taken
-let usedCombos = new Set();      // partner combo keys already taken
-let usedDiscords = new Set();    // discord names (lowercase) already assigned
+let historyMirror = {};          // userKey -> { singles:{enc:orig}, combos:{enc:orig} }
+let usedSingles = new Set();     // single commander names already taken (pool-wide)
+let usedCombos = new Set();      // partner combo keys already taken (pool-wide)
+let usedDiscords = new Set();    // discord names (lowercase) already assigned this event
 let firebaseReady = false;
 
+// ── Auth / scope state (see blocked()) ──
+let currentUser = null;          // { username, key } when logged in
+let guestSeq = false;            // is the in-progress spin sequence a guest roll?
+let scope = "personal";          // "personal" = also exclude my past results; "global" = pool-wide only
+
+// ── Admin ownership ──
+// Admin status is derived: you're admin iff logged in as the claimed owner
+// account. The owner is stored once (create-only) so #admin can't be abused
+// by anyone who stumbles on the URL.
+let adminOwnerKey = null;        // userKey of the admin account (null = unclaimed)
+let adminWired = false;          // admin button listeners attached only once
+const LS_ADMIN = "cw_admin_owner"; // local-preview fallback store
+
 function initFirebase() {
-  if (firebaseConfig.apiKey === "REPLACE_ME") {
+  if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "REPLACE_ME") {
     setStatus("⚠ Firebase not configured yet — edit firebase-config.js (see README). Running in local preview mode.", "warn");
     return false;
   }
@@ -56,6 +78,8 @@ function initFirebase() {
     const app = initializeApp(firebaseConfig);
     db = getDatabase(app);
     assignmentsRef = ref(db, `events/${EVENT_ID}/assignments`);
+    historyRef = ref(db, `events/${EVENT_ID}/history`);
+    usersRef = ref(db, `users`);
     onValue(assignmentsRef, (snap) => {
       assignments = snap.val() || {};
       recomputeUsed();
@@ -65,8 +89,26 @@ function initFirebase() {
       renderStats();
       if (phase === "main" && !wheel.spinning) buildMainWheel();
       updateSpinButton();
+      if (isAdmin) populateManualOptions();
     }, (err) => {
       setStatus("✖ Database error: " + err.message + " (check your Rules — see README)", "err");
+    });
+    onValue(historyRef, (snap) => {
+      historyMirror = snap.val() || {};
+      if (phase === "main" && !wheel.spinning) buildMainWheel();
+      renderStats();
+      updateSpinButton();
+    }, (err) => {
+      // Likely the updated rules haven't been published yet — degrade quietly:
+      // the app still works for the current event; cross-event blocking is off
+      // until `events/<id>/history` becomes readable.
+      console.warn("History unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "admin/owner"), (snap) => {
+      adminOwnerKey = snap.val() || null;
+      refreshAdminUI();
+    }, (err) => {
+      console.warn("Admin owner unavailable (publish database.rules.json?):", err.message);
     });
     return true;
   } catch (e) {
@@ -88,32 +130,48 @@ function recomputeUsed() {
 }
 
 // ─────────────────────────── Pool helpers ─────────────────────────
-const availableSingles = () => SINGLES.filter((c) => !usedSingles.has(c.name));
-
-function comboOpen(a, b) { return !usedCombos.has(comboKey(a, b)); }
-
-// partner cards that still have at least one open combo with another partner
-function partnersInPlay() {
-  return PARTNERS.filter((x) =>
-    PARTNERS.some((y) => y.name !== x.name && comboOpen(x.name, y.name)));
+// The wheel filter. Returns the sets of singles / combos that are NOT
+// rollable right now: pool-wide claimed ones always, plus — when scope is
+// "personal" and someone is logged in — that player's own past results
+// (per-exact-result, accumulated by "Store event & reset pool"). Guest rolls
+// and the logged-out view use scope "global" so they see the whole pool.
+function blocked() {
+  const s = new Set(usedSingles);
+  const c = new Set(usedCombos);
+  if (scope === "personal" && currentUser) {
+    const h = historyMirror[currentUser.key] || {};
+    for (const v of Object.values(h.singles || {})) s.add(v);
+    for (const v of Object.values(h.combos || {})) c.add(v);
+  }
+  return { s, c };
 }
 
-function openComboCount() {
+const availableSingles = (b) => SINGLES.filter((c) => !b.s.has(c.name));
+
+function comboOpen(b, a, x) { return !b.c.has(comboKey(a, x)); }
+
+// partner cards that still have at least one open combo with another partner
+function partnersInPlay(b) {
+  return PARTNERS.filter((x) =>
+    PARTNERS.some((y) => y.name !== x.name && comboOpen(b, x.name, y.name)));
+}
+
+function openComboCount(b) {
   let n = 0;
   for (let i = 0; i < PARTNERS.length; i++)
     for (let j = i + 1; j < PARTNERS.length; j++)
-      if (comboOpen(PARTNERS[i].name, PARTNERS[j].name)) n++;
+      if (comboOpen(b, PARTNERS[i].name, PARTNERS[j].name)) n++;
   return n;
 }
 
-function partnerSliceWeight() {
-  if (openComboCount() === 0) return 0;
-  if (PARTNER_ODDS === "cards") return partnersInPlay().length;
-  if (PARTNER_ODDS === "combos") return openComboCount();
+function partnerSliceWeight(b) {
+  if (openComboCount(b) === 0) return 0;
+  if (PARTNER_ODDS === "cards") return partnersInPlay(b).length;
+  if (PARTNER_ODDS === "combos") return openComboCount(b);
   const n = Number(PARTNER_ODDS);
   if (n > 0 && n < 1) {
     // dynamic ratio: pw / (singles + pw) = n  →  pw = singles × n/(1-n)
-    return availableSingles().length * (n / (1 - n));
+    return availableSingles(b).length * (n / (1 - n));
   }
   return n || 0;
 }
@@ -238,11 +296,12 @@ function interleave(singles, partnerWedges) {
 }
 
 function buildMainWheel() {
-  const singles = availableSingles().map((c, i) => ({
+  const b = blocked();
+  const singles = availableSingles(b).map((c, i) => ({
     label: c.name, weight: 1, kind: "single", payload: c,
     color: SINGLE_COLORS[i % SINGLE_COLORS.length],
   }));
-  const pw = partnerSliceWeight();
+  const pw = partnerSliceWeight(b);
   let partnerWedges = [];
   if (pw > 0) {
     const spread = Math.min(8, Math.max(2, Math.round(pw / 4)));
@@ -256,12 +315,13 @@ function buildMainWheel() {
 }
 
 function buildPartnerWheel(excludeName) {
+  const b = blocked();
   let list;
   if (!excludeName) {
-    list = partnersInPlay();
+    list = partnersInPlay(b);
     setWheelTitle("Partner Wheel — spin for your FIRST partner");
   } else {
-    list = PARTNERS.filter((y) => y.name !== excludeName && comboOpen(excludeName, y.name));
+    list = PARTNERS.filter((y) => y.name !== excludeName && comboOpen(b, excludeName, y.name));
     setWheelTitle(`Partner Wheel — first: ${excludeName} — spin for your SECOND`);
   }
   wheel.setWedges(list.map((c, i) => ({
@@ -317,62 +377,70 @@ function showResult(html, kind) {
   el.className = "result show " + (kind || "");
 }
 
-function nameOk() {
-  const v = $("discord").value.trim();
-  if (!v) { showResult("Enter your Discord name first ☝️", "err"); return null; }
-  if (usedDiscords.has(v.toLowerCase())) {
-    showResult(`⚠️ <b>${escapeHtml(v)}</b> already has a commander — check the list!`, "err");
-    return null;
-  }
-  return v;
-}
-
 function updateSpinButton() {
-  const btn = $("spinBtn");
+  const spin = $("spinBtn");
+  const guest = $("guestBtn");
+  // Guest Spin can only START a fresh roll — not continue a partner sequence.
+  guest.disabled = wheel.spinning || phase !== "main";
   if (phase === "main") {
-    const done = availableSingles().length === 0 && partnerSliceWeight() === 0;
-    btn.disabled = done || wheel.spinning;
-    btn.textContent = done ? "All commanders assigned 🎉" : "SPIN";
+    if (!currentUser) {
+      spin.disabled = true;
+      spin.textContent = "Log in to spin";
+    } else {
+      const b = blocked();
+      const done = availableSingles(b).length === 0 && partnerSliceWeight(b) === 0;
+      spin.disabled = done || wheel.spinning;
+      spin.textContent = done ? "Nothing left for you 🎉" : "SPIN";
+    }
   } else if (phase === "partner1") {
-    btn.textContent = "Spin for Partner 1";
+    spin.disabled = wheel.spinning;
+    spin.textContent = "Spin for Partner 1";
   } else if (phase === "partner2") {
-    btn.textContent = "Spin for Partner 2";
+    spin.disabled = wheel.spinning;
+    spin.textContent = "Spin for Partner 2";
   }
 }
 
 async function onSpin() {
-  const name = nameOk();
-  if (!name) return;
   if (wheel.spinning) return;
+  const guest = guestSeq;
+  if (!guest && !currentUser) {
+    setAuthMsg("Log in to spin — or hit Guest Spin to roll just for fun.", "err");
+    return;
+  }
+  const name = guest ? null : currentUser.username;
   $("spinBtn").disabled = true;
-  $("discord").disabled = true;
+  $("guestBtn").disabled = true;
 
   if (phase === "main") {
     buildMainWheel();
     const w = await wheel.spin();
-    if (!w) { resetToMain(); return; }
+    if (!w) { endSequence(); return; }
     if (w.kind === "single") {
       const c = w.payload;
+      const flip = c.back ? ` <span class="flip">// ${escapeHtml(c.back)}</span>` : "";
+      if (guest) {
+        showResult(`<div class="cards">${cardsForName(c.name, "big")}</div>` +
+          `🎲 Guest roll: <b>${escapeHtml(c.name)}</b>${flip} <span class="muted">— not saved</span>`, "guest");
+        endSequence();
+        return;
+      }
       const ok = await commit(
-        { discord: name, type: "single", name: c.name, back: c.back || null, ts: Date.now() },
+        { discord: name, uid: currentUser.key, type: "single", name: c.name, back: c.back || null, ts: Date.now() },
         (uS, uC, uD) => !uS.has(c.name) && !uD.has(name.toLowerCase()),
       );
       if (ok.committed) {
-        const flip = c.back ? ` <span class="flip">// ${c.back}</span>` : "";
         showResult(`<div class="cards">${cardsForName(c.name, "big")}</div>` +
-          `🎴 <b>${name}</b> got <b>${c.name}</b>${flip}`, "ok");
-        resetToMain();
+          `🎴 <b>${escapeHtml(name)}</b> got <b>${escapeHtml(c.name)}</b>${flip}`, "ok");
       } else {
-        showResult(`😬 <b>${c.name}</b> was just taken by someone else. Spin again!`, "err");
-        resetToMain();
+        showResult(`😬 <b>${escapeHtml(c.name)}</b> was just taken (or you already have a commander this event). Spin again!`, "err");
       }
+      endSequence();
     } else { // partner slice
       phase = "partner1";
       partnerA = null;
       const n = buildPartnerWheel(null);
       showResult(`🤝 <b>PARTNER!</b> The partner wheel is loaded (${n} options). Spin again for your first partner.`, "partner");
-      $("spinBtn").disabled = false;
-      $("discord").disabled = false;
       updateSpinButton();
     }
     return;
@@ -381,19 +449,17 @@ async function onSpin() {
   if (phase === "partner1") {
     buildPartnerWheel(null);
     const w = await wheel.spin();
-    if (!w) { resetToMain(); return; }
+    if (!w) { endSequence(); return; }
     partnerA = w.payload.name;
     phase = "partner2";
     const n = buildPartnerWheel(partnerA);
     if (n === 0) {
-      showResult(`All combos for <b>${partnerA}</b> are taken — spinning for a new first partner.`, "err");
+      showResult(`All combos for <b>${escapeHtml(partnerA)}</b> are taken — spinning for a new first partner.`, "err");
       phase = "partner1"; partnerA = null; buildPartnerWheel(null);
     } else {
       showResult(`<div class="cards">${cardsForName(partnerA, "big")}</div>` +
-        `First partner: <b>${partnerA}</b>. Spin again for your second (${n} options).`, "partner");
+        `First partner: <b>${escapeHtml(partnerA)}</b>. Spin again for your second (${n} options).`, "partner");
     }
-    $("spinBtn").disabled = false;
-    $("discord").disabled = false;
     updateSpinButton();
     return;
   }
@@ -401,42 +467,54 @@ async function onSpin() {
   if (phase === "partner2") {
     buildPartnerWheel(partnerA);
     const w = await wheel.spin();
-    if (!w) { resetToMain(); return; }
+    if (!w) { endSequence(); return; }
     const b = w.payload.name;
+    if (guest) {
+      showResult(`<div class="cards">${cardsForName(partnerA, "big")}${cardsForName(b, "big")}</div>` +
+        `🎲 Guest roll: <b>${escapeHtml(partnerA)}</b> + <b>${escapeHtml(b)}</b> <span class="muted">— not saved</span>`, "guest");
+      endSequence();
+      return;
+    }
     const ok = await commit(
-      { discord: name, type: "partner", partnerA, partnerB: b, ts: Date.now() },
+      { discord: name, uid: currentUser.key, type: "partner", partnerA, partnerB: b, ts: Date.now() },
       (uS, uC, uD) => !uC.has(comboKey(partnerA, b)) && !uD.has(name.toLowerCase()),
     );
     if (ok.committed) {
       showResult(`<div class="cards">${cardsForName(partnerA, "big")}${cardsForName(b, "big")}</div>` +
-        `🤝 <b>${name}</b> got <b>${partnerA}</b> + <b>${b}</b>`, "ok");
-      resetToMain();
+        `🤝 <b>${escapeHtml(name)}</b> got <b>${escapeHtml(partnerA)}</b> + <b>${escapeHtml(b)}</b>`, "ok");
+      endSequence();
     } else {
-      showResult(`😬 <b>${partnerA} + ${b}</b> was just taken. Spinning again for partner two.`, "err");
+      showResult(`😬 <b>${escapeHtml(partnerA)} + ${escapeHtml(b)}</b> was just taken. Spinning again for partner two.`, "err");
       phase = "partner2";
       buildPartnerWheel(partnerA);
-      $("spinBtn").disabled = false;
-      $("discord").disabled = false;
       updateSpinButton();
     }
     return;
   }
 }
 
+// End the current spin sequence and return to a fresh personal main wheel.
+function endSequence() {
+  guestSeq = false;
+  scope = "personal";
+  resetToMain();
+}
+
 function resetToMain() {
   phase = "main";
   partnerA = null;
   buildMainWheel();
-  $("discord").disabled = false;
   updateSpinButton();
 }
 
 // ──────────────────────────── Rendering ───────────────────────────
 function renderStats() {
-  const s = availableSingles().length;
-  const c = openComboCount();
+  const b = blocked();
+  const s = availableSingles(b).length;
+  const c = openComboCount(b);
+  const mine = (scope === "personal" && currentUser) ? " for you" : "";
   $("stats").innerHTML =
-    `<span>${s}</span> single commanders left &nbsp;•&nbsp; <span>${c}</span> partner combos open`;
+    `<span>${s}</span> single commanders left${mine} &nbsp;•&nbsp; <span>${c}</span> partner combos open${mine}`;
 }
 
 function renderResults() {
@@ -447,7 +525,8 @@ function renderResults() {
     return;
   }
   const removeBtn = (key) => isAdmin
-    ? `<button class="remove-btn" data-key="${key}" title="Remove assignment">✕</button>`
+    ? `<button class="reroll-btn" data-key="${key}" title="Re-roll — frees this result so they can spin again">↻</button>` +
+      `<button class="remove-btn" data-key="${key}" title="Remove assignment">✕</button>`
     : "";
   $("results").innerHTML = list.map(([key, a]) => {
     const who = escapeHtml(a.discord || "?");
@@ -468,47 +547,404 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 }
 
+// ──────────────────────────── Accounts ────────────────────────────
+// Lightweight, server-less auth for a playgroup: register/log in with a
+// Discord username (free text) + password. Passwords are hashed in the
+// browser with PBKDF2-SHA256 (WebCrypto) + a unique salt; we store only the
+// hash. This is "good enough for a Discord draft", NOT bank-grade — under the
+// open database rules the hashes are readable, so it deters casual snooping
+// rather than a determined attacker. See README for the limitations.
+const PBKDF2_ITER = 150000;
+const LS_USERS = "cw_users";       // local-preview account store (no Firebase)
+const LS_SESSION = "cw_session";   // persisted "stay logged in" pointer (never the password)
+
+const bytesToHex = (bytes) => Array.from(bytes).map((x) => x.toString(16).padStart(2, "0")).join("");
+function hexToBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+function randomSaltHex() {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return bytesToHex(b);
+}
+async function hashPassword(password, saltHex, iterations) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: hexToBytes(saltHex), iterations, hash: "SHA-256" },
+    keyMaterial, 256);
+  return bytesToHex(new Uint8Array(bits));
+}
+// constant-time-ish hex compare (avoid leaking match length via early-exit)
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+
+function localUsers() {
+  try { return JSON.parse(localStorage.getItem(LS_USERS) || "{}"); }
+  catch { return {}; }
+}
+// Account storage lives in Firebase when configured, else in localStorage so
+// the whole feature is testable offline (local-preview mode).
+async function readUser(key) {
+  if (db) {
+    const snap = await get(ref(db, `users/${key}`));
+    return snap.exists() ? snap.val() : null;
+  }
+  return localUsers()[key] || null;
+}
+async function writeNewUser(key, record) {
+  if (db) {
+    // Create-only: abort if the username already exists (no overwrite/hijack).
+    const res = await runTransaction(ref(db, `users/${key}`), (cur) => (cur ? undefined : record));
+    return res.committed;
+  }
+  const users = localUsers();
+  if (users[key]) return false;
+  users[key] = record;
+  localStorage.setItem(LS_USERS, JSON.stringify(users));
+  return true;
+}
+
+function setAuthMsg(msg, kind) {
+  const el = $("authMsg");
+  el.textContent = msg || "";
+  el.className = "auth-msg " + (kind || "");
+}
+function renderAuth() {
+  if (currentUser) {
+    $("authLoggedOut").style.display = "none";
+    $("authLoggedIn").style.display = "flex";
+    $("whoami").textContent = currentUser.username;
+  } else {
+    $("authLoggedOut").style.display = "flex";
+    $("authLoggedIn").style.display = "none";
+  }
+}
+
+async function register() {
+  const username = $("authUser").value.trim();
+  const pw = $("authPass").value;
+  if (!username) return setAuthMsg("Enter a Discord username.", "err");
+  if (pw.length < 4) return setAuthMsg("Password must be at least 4 characters.", "err");
+  if (!window.crypto || !crypto.subtle) {
+    return setAuthMsg("Secure crypto unavailable — open the site over https or localhost.", "err");
+  }
+  const key = userKey(username);
+  setAuthMsg("Creating account…", "");
+  try {
+    if (await readUser(key)) return setAuthMsg("That username is taken — try logging in instead.", "err");
+    const salt = randomSaltHex();
+    const hash = await hashPassword(pw, salt, PBKDF2_ITER);
+    const created = await writeNewUser(key, { username, salt, hash, iterations: PBKDF2_ITER, createdTs: Date.now() });
+    if (!created) return setAuthMsg("That username was just taken — try logging in.", "err");
+    finishLogin(username, key);
+    setAuthMsg("Account created — you're logged in.", "ok");
+  } catch (e) {
+    setAuthMsg("Registration failed: " + e.message, "err");
+  }
+}
+
+async function login() {
+  const username = $("authUser").value.trim();
+  const pw = $("authPass").value;
+  if (!username) return setAuthMsg("Enter your Discord username.", "err");
+  if (!pw) return setAuthMsg("Enter your password.", "err");
+  const key = userKey(username);
+  setAuthMsg("Logging in…", "");
+  try {
+    const rec = await readUser(key);
+    if (!rec) return setAuthMsg("No account with that username — register first.", "err");
+    const hash = await hashPassword(pw, rec.salt, rec.iterations || PBKDF2_ITER);
+    if (!safeEqual(hash, rec.hash)) return setAuthMsg("Wrong password.", "err");
+    finishLogin(rec.username || username, key);
+    setAuthMsg("", "");
+  } catch (e) {
+    setAuthMsg("Login failed: " + e.message, "err");
+  }
+}
+
+// Session persistence. We store only the identity pointer {username, key},
+// never the password. "Remember me" → localStorage (survives a browser
+// restart). Unchecked → sessionStorage (cleared when the tab/browser closes),
+// for shared computers.
+function saveSession(remember) {
+  const data = JSON.stringify(currentUser);
+  try {
+    if (remember) { localStorage.setItem(LS_SESSION, data); sessionStorage.removeItem(LS_SESSION); }
+    else { sessionStorage.setItem(LS_SESSION, data); localStorage.removeItem(LS_SESSION); }
+  } catch { /* ignore */ }
+}
+function clearSession() {
+  try { localStorage.removeItem(LS_SESSION); sessionStorage.removeItem(LS_SESSION); } catch { /* ignore */ }
+}
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(LS_SESSION) || sessionStorage.getItem(LS_SESSION);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function finishLogin(username, key) {
+  currentUser = { username, key };
+  const remember = $("authRemember") ? $("authRemember").checked : true;
+  saveSession(remember);
+  $("authPass").value = "";
+  renderAuth();
+  endSequence();        // rebuild a fresh personal wheel for this account
+  renderStats();
+  refreshAdminUI();     // admin tools appear if this is the owner account
+}
+
+function logout() {
+  currentUser = null;
+  clearSession();
+  renderAuth();
+  setAuthMsg("", "");
+  endSequence();
+  renderStats();
+  refreshAdminUI();     // hide admin tools
+}
+
+function restoreSession() {
+  const s = loadSession();
+  if (s && s.username && s.key) currentUser = s;
+  renderAuth();
+}
+
 // ───────────────────────────── Admin ──────────────────────────────
-async function removeAssignment(key) {
-  const entry = assignments[key];
-  if (!entry) return;
-  if (!confirm(`Remove ${entry.discord}'s assignment?`)) return;
+async function deleteAssignment(key) {
   if (!firebaseReady) {
     delete assignments[key];
     recomputeUsed(); renderResults(); renderStats();
     if (phase === "main" && !wheel.spinning) buildMainWheel();
+    if (isAdmin) populateManualOptions();
     return;
   }
   await remove(ref(db, `events/${EVENT_ID}/assignments/${key}`));
   // onValue re-fires and updates everything
 }
 
-function setupAdmin() {
-  if (location.hash !== "#admin") return;
-  isAdmin = true;
-  $("adminBar").style.display = "flex";
+async function removeAssignment(key) {
+  const e = assignments[key];
+  if (!e) return;
+  if (!confirm(`Remove ${e.discord}'s assignment?`)) return;
+  await deleteAssignment(key);
+}
+
+async function reRoll(key) {
+  const e = assignments[key];
+  if (!e) return;
+  const what = e.type === "single" ? e.name : `${e.partnerA} + ${e.partnerB}`;
+  if (!confirm(`Re-roll ${e.discord}? This frees ${what} back to the pool so they can spin again.`)) return;
+  await deleteAssignment(key);
+}
+
+// Archive the current event, fold each result into that player's per-exact
+// history (so they can't re-roll it), then clear assignments to refill the pool.
+async function storeEventAndReset() {
+  const entries = Object.entries(assignments);
+  if (entries.length === 0) return alert("No results to store yet.");
+  if (!confirm(`Store ${entries.length} result(s) and reset the pool?\n\nAll commanders return to the pool, but each player keeps their stored result and can't roll that exact result again.`)) return;
+
+  if (!firebaseReady) {
+    for (const [, a] of entries) foldIntoHistory(historyMirror, a);
+    assignments = {};
+    recomputeUsed(); renderResults(); renderStats(); endSequence();
+    if (isAdmin) populateManualOptions();
+    return;
+  }
+
+  const snapId = push(ref(db, `events/${EVENT_ID}/archives`)).key;
+  const updates = {};
+  updates[`archives/${snapId}`] = { ts: Date.now(), assignments: Object.fromEntries(entries) };
+  for (const [, a] of entries) {
+    const k = userKey(a.discord || "");
+    if (!k) continue;
+    if (a.type === "single") {
+      updates[`history/${k}/singles/${encKey(a.name)}`] = a.name;
+    } else if (a.type === "partner") {
+      const ck = comboKey(a.partnerA, a.partnerB);
+      updates[`history/${k}/combos/${encKey(ck)}`] = ck;
+    }
+  }
+  updates["assignments"] = null;
+  await update(ref(db, `events/${EVENT_ID}`), updates);
+  endSequence();
+}
+
+// Mirror of the store-event fold, for local-preview mode.
+function foldIntoHistory(mirror, a) {
+  const k = userKey(a.discord || "");
+  if (!k) return;
+  const h = mirror[k] || (mirror[k] = { singles: {}, combos: {} });
+  if (a.type === "single") {
+    (h.singles || (h.singles = {}))[encKey(a.name)] = a.name;
+  } else if (a.type === "partner") {
+    const ck = comboKey(a.partnerA, a.partnerB);
+    (h.combos || (h.combos = {}))[encKey(ck)] = ck;
+  }
+}
+
+function setMaMsg(msg, kind) {
+  const el = $("maMsg");
+  el.textContent = msg || "";
+  el.className = "auth-msg " + (kind || "");
+}
+
+// Manually assign a commander to a username (admin). Validates the
+// commander/combo is still free, but does NOT require the player to be
+// account-less or commander-less — handy for re-attaching existing results.
+async function manualAssign() {
+  const username = $("maUser").value.trim();
+  if (!username) return setMaMsg("Enter a username.", "err");
+  const type = $("maType").value;
+  if (type === "single") {
+    const cName = $("maA").value;
+    if (!cName) return setMaMsg("Pick a commander.", "err");
+    if (usedSingles.has(cName)) return setMaMsg(`${cName} is already taken.`, "err");
+    const c = NAME_MAP.get(cName);
+    const ok = await commit(
+      { discord: username, uid: userKey(username), type: "single", name: cName, back: (c && c.back) || null, ts: Date.now() },
+      (uS) => !uS.has(cName),
+    );
+    setMaMsg(ok.committed ? `Assigned ${cName} to ${username}.` : `${cName} was just taken.`, ok.committed ? "ok" : "err");
+  } else {
+    const a = $("maA").value, b = $("maB").value;
+    if (!a || !b) return setMaMsg("Pick both partners.", "err");
+    if (a === b) return setMaMsg("Pick two different partners.", "err");
+    if (usedCombos.has(comboKey(a, b))) return setMaMsg(`${a} + ${b} is already taken.`, "err");
+    const ok = await commit(
+      { discord: username, uid: userKey(username), type: "partner", partnerA: a, partnerB: b, ts: Date.now() },
+      (uS, uC) => !uC.has(comboKey(a, b)),
+    );
+    setMaMsg(ok.committed ? `Assigned ${a} + ${b} to ${username}.` : `${a} + ${b} was just taken.`, ok.committed ? "ok" : "err");
+  }
+  if (firebaseReady) await new Promise((r) => setTimeout(r, 50)); // let onValue settle
+  populateManualOptions();
+}
+
+// Fill the manual-assign dropdowns from the pool-wide available list.
+function populateManualOptions() {
+  const type = $("maType") ? $("maType").value : "single";
+  const b = { s: usedSingles, c: usedCombos };
+  const opt = (v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`;
+  if (type === "single") {
+    $("maB").style.display = "none";
+    $("maA").innerHTML = `<option value="">— pick a commander —</option>` +
+      availableSingles(b).map((c) => opt(c.name)).join("");
+  } else {
+    $("maB").style.display = "";
+    const ps = PARTNERS.map((c) => c.name).sort();
+    $("maA").innerHTML = `<option value="">— first partner —</option>` + ps.map(opt).join("");
+    $("maB").innerHTML = `<option value="">— second partner —</option>` + ps.map(opt).join("");
+  }
+}
+
+async function refreshUserList() {
+  let users = {};
+  if (db) { try { const snap = await get(usersRef); users = snap.val() || {}; } catch { /* ignore */ } }
+  else { users = localUsers(); }
+  const names = Object.values(users).map((u) => u && u.username).filter(Boolean).sort();
+  $("userList").innerHTML = names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
+}
+
+// Attach the admin button handlers once. The buttons live in the DOM always
+// (hidden until you're admin); wiring them up front avoids double-binding when
+// admin status flips on login/logout.
+function wireAdmin() {
+  if (adminWired) return;
+  adminWired = true;
+  $("claimBtn").addEventListener("click", claimAdmin);
   $("resetBtn").addEventListener("click", async () => {
-    if (!confirm("Clear ALL assignments for this event? This cannot be undone.")) return;
-    if (!firebaseReady) { assignments = {}; recomputeUsed(); renderResults(); renderStats(); resetToMain(); return; }
+    if (!confirm("Clear ALL assignments for this event? This cannot be undone. (Use 'Store event & reset' if you want to keep results.)")) return;
+    if (!firebaseReady) { assignments = {}; recomputeUsed(); renderResults(); renderStats(); endSequence(); populateManualOptions(); return; }
     await runTransaction(assignmentsRef, () => null);
-    resetToMain();
+    endSequence();
   });
+  $("storeResetBtn").addEventListener("click", storeEventAndReset);
+  $("maType").addEventListener("change", populateManualOptions);
+  $("maAssignBtn").addEventListener("click", manualAssign);
+}
+
+// Show/hide admin tools based on (logged-in account === claimed owner). #admin
+// in the URL only reveals the one-time "claim" button while still unclaimed.
+function refreshAdminUI() {
+  const owner = adminOwnerKey;
+  isAdmin = !!(currentUser && owner && currentUser.key === owner);
+
+  $("adminBar").style.display = isAdmin ? "flex" : "none";
+  $("adminPanel").style.display = isAdmin ? "block" : "none";
+
+  const canClaim = location.hash === "#admin" && !owner;
+  $("adminClaim").style.display = canClaim ? "flex" : "none";
+  if (canClaim) {
+    $("claimMsg").textContent = currentUser
+      ? `Make “${currentUser.username}” the permanent admin for this app.`
+      : "Log in (or register) first, then claim admin for your account.";
+    $("claimBtn").disabled = !currentUser;
+  }
+
+  if (isAdmin) { populateManualOptions(); refreshUserList(); }
+  renderResults();   // reflect re-roll / remove buttons
+}
+
+// One-time claim: writes the owner only if none exists yet (create-only, both
+// in the rules and here), so a leaked #admin link can't seize or change it.
+async function claimAdmin() {
+  if (!currentUser) return setAuthMsg("Log in first, then claim admin.", "err");
+  if (adminOwnerKey) return;
+  if (!db) {   // local-preview mode
+    try { localStorage.setItem(LS_ADMIN, currentUser.key); } catch { /* ignore */ }
+    adminOwnerKey = currentUser.key;
+    refreshAdminUI();
+    return;
+  }
+  const res = await runTransaction(ref(db, "admin/owner"), (cur) => (cur ? undefined : currentUser.key));
+  if (!res.committed) alert("Admin was just claimed by another account.");
+  // onValue("admin/owner") fires and calls refreshAdminUI()
 }
 
 // ───────────────────────────── Boot ───────────────────────────────
 function boot() {
   wheel = new Wheel($("wheel"));
+  restoreSession();
   buildMainWheel();
   renderStats();
   renderResults();
-  $("spinBtn").addEventListener("click", onSpin);
-  $("discord").addEventListener("keydown", (e) => { if (e.key === "Enter") onSpin(); });
-  $("results").addEventListener("click", (e) => {
-    const btn = e.target.closest(".remove-btn");
-    if (btn) removeAssignment(btn.dataset.key);
+  $("spinBtn").addEventListener("click", () => {
+    if (wheel.spinning) return;
+    if (phase === "main") { guestSeq = false; scope = "personal"; }
+    onSpin();
   });
-  setupAdmin();
-  initFirebase();
+  $("guestBtn").addEventListener("click", () => {
+    if (wheel.spinning || phase !== "main") return;
+    guestSeq = true; scope = "global";
+    onSpin();
+  });
+  $("loginBtn").addEventListener("click", login);
+  $("registerBtn").addEventListener("click", register);
+  $("logoutBtn").addEventListener("click", logout);
+  $("authUser").addEventListener("keydown", (e) => { if (e.key === "Enter") $("authPass").focus(); });
+  $("authPass").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+  $("results").addEventListener("click", (e) => {
+    const rb = e.target.closest(".reroll-btn");
+    if (rb) { reRoll(rb.dataset.key); return; }
+    const xb = e.target.closest(".remove-btn");
+    if (xb) removeAssignment(xb.dataset.key);
+  });
+  wireAdmin();
+  const configured = initFirebase();
+  // Local-preview mode (no Firebase): the owner lives in localStorage.
+  if (!configured) { try { adminOwnerKey = localStorage.getItem(LS_ADMIN) || null; } catch { /* ignore */ } }
+  window.addEventListener("hashchange", refreshAdminUI);
+  refreshAdminUI();
   updateSpinButton();
 }
 

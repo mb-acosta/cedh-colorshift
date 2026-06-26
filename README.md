@@ -74,15 +74,76 @@ The included `.nojekyll` file makes sure GitHub Pages serves everything as-is.
 
 ## Using it
 
-- Everyone opens the link, types their Discord name, and hits **SPIN**.
+- Everyone opens the link, **registers** a simple account (Discord username +
+  password — no email), and hits **SPIN**. Their result is saved to the shared
+  list and tied to their account.
+- **Guest Spin** rolls for fun without an account and **never saves** anything —
+  the pool and the assignments list are untouched.
 - The **Assignments** panel updates live on every device.
 - It also works if one person drives a single shared screen — same result.
 
-### Admin mode (reset the pool)
+### Accounts
 
-Add `#admin` to the URL (e.g. `…github.io/your-repo/#admin`). A red bar appears
-with a **Reset all assignments** button that clears the current event. There's no
-password, so only share the `#admin` link with the organizer.
+- **Register / Log in** at the top of the wheel with a Discord username (free
+  text, exactly as you like it) and a password. No email or contact info is
+  collected or required.
+- **Remember me** (checked by default) keeps you logged in across browser
+  restarts (a pointer is kept in `localStorage` — never your password). Uncheck
+  it on a shared computer and you'll only stay logged in until the tab/browser
+  closes (`sessionStorage`). **Log out** clears both.
+- A saved spin requires being logged in; **Guest Spin** does not.
+- Your identity is just your (lower-cased) username, so if you played as
+  `coolguy` with the old free-text box and later register `coolguy`, your past
+  results line up automatically — nothing is lost when accounts are introduced.
+
+> **Password security (read this).** This is a static, server-less app, so
+> passwords are hashed **in the browser** with PBKDF2-SHA256 (150k iterations)
+> and a unique random salt; only the hash + salt are stored. The plaintext
+> password is never stored or sent anywhere. This is **good enough for a Discord
+> playgroup, not bank-grade**: under the open database rules below the hashes are
+> technically readable, so a determined attacker could try to brute-force weak
+> passwords. Don't reuse an important password here. Account records are
+> **create-only** (the rules block overwriting an existing username), so accounts
+> can't be hijacked or have their password changed from the client. There is no
+> password reset — pick something you'll remember.
+
+### Admin mode
+
+Admin is tied to **one account**, not a shareable link. First-time setup:
+
+1. Register/log in with the account you want to be the organizer.
+2. Add `#admin` to the URL once (e.g. `…github.io/your-repo/#admin`) — a
+   **“Make this account the admin”** bar appears. Click it. This writes the
+   owner once and locks it (create-only), so it can't be taken or changed from
+   the app afterward. **Do this right after you deploy**, before sharing the
+   link, so nobody can claim it first.
+
+From then on the admin tools appear **automatically whenever the owner account
+is logged in** — `#admin` is no longer needed, and a leaked `#admin` link does
+nothing for anyone who isn't logged in as the owner. (To move admin to a
+different account later, delete `admin/owner` in the Firebase console, then
+claim again.)
+
+> Note: this gates the **admin UI** behind a password-protected account, which
+> stops casual misuse of a leaked link. It does **not** make the database
+> tamper-proof — under the open rules a determined person could still write via
+> the API. True enforcement would need Firebase Auth or a backend.
+
+The admin tools are:
+
+- **📦 Store event & reset pool** — archives every current result, then returns
+  **all** commanders to the pool for a new event. Each player keeps their stored
+  result and **can't re-roll that exact result again** (a single they got is
+  blocked as a single; a partner pair blocks only that exact pair). Past events
+  are saved under `events/<id>/archives` for the record.
+- **Reset all assignments** — wipes the current event's assignments **without**
+  storing them (the old behavior). Use *Store event & reset* instead if you want
+  to keep the results.
+- **↻ Re-roll** (on each result row) — removes that player's result and frees it
+  back to the pool so they can spin again. **✕** removes a result outright.
+- **Manually assign a commander** — pick/type a username, choose a single or a
+  partner pair, and assign it directly. Useful for hand-assigning or for
+  re-attaching existing results to a player without anyone re-rolling.
 
 ---
 
