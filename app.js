@@ -23,6 +23,13 @@ const PARTNERS = COMMANDERS.filter((c) => c.partner);
 const comboKey = (a, b) => [a, b].sort().join("  ||  ");
 const NAME_MAP = new Map(COMMANDERS.map((c) => [c.name, c]));
 
+// Color variants of one commander share a "base name" — the part before a
+// trailing "(...)", e.g. "Dargo, the Shipwrecker (Black)" / "(Blue)" both base
+// to "Dargo, the Shipwrecker". A partner pair must never be two variants of the
+// same commander, so we treat them as the same card for pairing purposes.
+const baseName = (name) => String(name).replace(/\s*\([^()]*\)\s*$/, "").trim();
+const sameCommander = (a, b) => baseName(a) === baseName(b);
+
 // Firebase keys forbid  . $ # [ ] /  and control chars. encodeURIComponent
 // handles all of those except ".", which we escape too. Used for account keys
 // and for storing commander names / combo keys as history child-keys.
@@ -152,7 +159,7 @@ function blocked() {
 
 const availableSingles = (b) => SINGLES.filter((c) => !b.s.has(c.name));
 
-function comboOpen(b, a, x) { return !b.c.has(comboKey(a, x)); }
+function comboOpen(b, a, x) { return !sameCommander(a, x) && !b.c.has(comboKey(a, x)); }
 
 // partner cards that still have at least one open combo with another partner
 function partnersInPlay(b) {
@@ -833,6 +840,7 @@ async function manualAssign() {
     const a = $("maA").value, b = $("maB").value;
     if (!a || !b) return setMaMsg("Pick both partners.", "err");
     if (a === b) return setMaMsg("Pick two different partners.", "err");
+    if (sameCommander(a, b)) return setMaMsg(`${a} and ${b} are color variants of the same commander — pick two different ones.`, "err");
     if (usedCombos.has(comboKey(a, b))) return setMaMsg(`${a} + ${b} is already taken.`, "err");
     const ok = await commit(
       { discord: username, uid: userKey(username), type: "partner", partnerA: a, partnerB: b, ts: Date.now() },
