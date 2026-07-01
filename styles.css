@@ -27,6 +27,13 @@ h1 { margin: 0; font-size: 1.5rem; }
 .status.warn { color: var(--gold); }
 .status.err { color: var(--err); }
 
+.admin-toggle {
+  display: inline-flex; align-items: center; gap: 6px; margin: 8px 0 0 22px;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer; font-size: .82rem; font-weight: 600;
+  background: #2a1818; color: var(--ink); border: 1px solid rgba(255,255,255,.15);
+}
+.admin-toggle:hover { border-color: var(--gold); }
+
 .admin-bar {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   background: #2a1818; padding: 8px 22px; font-size: .9rem;

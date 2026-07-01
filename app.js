@@ -99,7 +99,7 @@ function applyCardImages(snap) {
   // spin's result picks up the change.
   if (typeof renderResults === "function") renderResults();
   if (wheel && phase === "main" && !wheel.spinning) buildMainWheel();
-  if (isAdmin) renderCardArtGrid();
+  if (isAdmin && !adminCollapsed) renderCardArtGrid();
 }
 
 // ───────────────────────────── Firebase ───────────────────────────
@@ -123,7 +123,9 @@ let scope = "personal";          // "personal" = exclude my past results too; "a
 let adminOwnerKey = null;        // userKey of the admin account (null = unclaimed)
 let adminWired = false;          // admin button listeners attached only once
 let registeredKeys = new Set();  // userKeys that have a registered account (loaded in admin)
+let adminCollapsed = false;      // admin tools minimized to a chip (persisted per-browser)
 const LS_ADMIN = "cw_admin_owner"; // local-preview fallback store
+const LS_ADMIN_COLLAPSED = "cw_admin_collapsed";
 
 function initFirebase() {
   if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "REPLACE_ME") {
@@ -1221,6 +1223,11 @@ function wireAdmin() {
   if (adminWired) return;
   adminWired = true;
   $("claimBtn").addEventListener("click", claimAdmin);
+  $("adminToggle").addEventListener("click", () => {
+    adminCollapsed = !adminCollapsed;
+    try { localStorage.setItem(LS_ADMIN_COLLAPSED, adminCollapsed ? "1" : "0"); } catch { /* ignore */ }
+    refreshAdminUI();
+  });
   $("resetBtn").addEventListener("click", async () => {
     if (!confirm("Clear ALL assignments for this event? This cannot be undone. (Use 'Store event & reset' if you want to keep results.)")) return;
     if (!firebaseReady) { assignments = {}; recomputeUsed(); renderResults(); renderStats(); endSequence(); populateManualOptions(); return; }
@@ -1287,9 +1294,16 @@ function refreshAdminUI() {
   const owner = adminOwnerKey;
   isAdmin = !!(currentUser && owner && currentUser.key === owner);
 
-  $("adminBar").style.display = isAdmin ? "flex" : "none";
-  $("adminPanel").style.display = isAdmin ? "block" : "none";
-  $("cardArtPanel").style.display = isAdmin ? "block" : "none";
+  // The owner can minimize the tools to a small chip; the chip itself stays
+  // visible so they can bring the tools back. State is remembered per-browser.
+  const showTools = isAdmin && !adminCollapsed;
+  const toggle = $("adminToggle");
+  toggle.style.display = isAdmin ? "inline-flex" : "none";
+  toggle.setAttribute("aria-expanded", String(showTools));
+  toggle.textContent = showTools ? "🔧 Admin ▾" : "🔧 Admin ▸";
+  $("adminBar").style.display = showTools ? "flex" : "none";
+  $("adminPanel").style.display = showTools ? "block" : "none";
+  $("cardArtPanel").style.display = showTools ? "block" : "none";
 
   const canClaim = location.hash === "#admin" && !owner;
   $("adminClaim").style.display = canClaim ? "flex" : "none";
@@ -1300,7 +1314,8 @@ function refreshAdminUI() {
     $("claimBtn").disabled = !currentUser;
   }
 
-  if (isAdmin) { populateManualOptions(); refreshUserList(); renderCardArtGrid(); }
+  if (isAdmin) { populateManualOptions(); refreshUserList(); }
+  if (showTools) renderCardArtGrid();
   renderResults();   // reflect re-roll / remove buttons
 }
 
@@ -1323,6 +1338,7 @@ async function claimAdmin() {
 // ───────────────────────────── Boot ───────────────────────────────
 function boot() {
   wheel = new Wheel($("wheel"));
+  try { adminCollapsed = localStorage.getItem(LS_ADMIN_COLLAPSED) === "1"; } catch { /* ignore */ }
   restoreSession();
   buildMainWheel();
   renderStats();
