@@ -149,6 +149,22 @@ The admin tools are:
 - **Manually assign a commander** — pick/type a username, choose a single or a
   partner pair, and assign it directly. Useful for hand-assigning or for
   re-attaching existing results to a player without anyone re-rolling.
+- **Card art** — update a card's Google Drive image without editing files or
+  redeploying. Changes are stored in the database (`cardImages`) and go live for
+  everyone (wheel + gallery) instantly.
+  - *Per card:* drop a Drive share link onto a card face (front/back), or paste a
+    link/ID and hit **Set**. **Revert** restores the shipped art.
+  - *Bulk import:* open **Bulk import from the new Drive folder**, paste the new
+    folder's link/ID and **Scan folder** (needs the *Google Drive API* enabled on
+    the project and the folder shared "Anyone with the link"). If listing is
+    blocked, paste a `Commander Name, driveId` list (or `{ "Name": "id" }` JSON)
+    and **Match pasted list** instead. Either way you get a **review table** —
+    files are matched to commanders by name (front/back handled automatically);
+    tick the rows to change and **Apply selected**.
+  - Like the other admin tools this gates the *UI* behind the owner account but
+    doesn't make the data tamper-proof (see the security note above). After
+    deploying, **re-publish `database.rules.json`** so the new `cardImages` path
+    is writable.
 - **Account badge** — in the Assignments list, each result shows a small
   **✓ account** (a registered account exists for that name) or **no account**
   (nobody has registered that username yet). Handy for seeing which existing
@@ -170,7 +186,9 @@ The admin tools are:
   `commanders.js`, served via `https://lh3.googleusercontent.com/d/<id>=w480`.
   Each card file must be shared **"Anyone with the link"** or the image silently
   hides (the rest of the app keeps working). To use your own image host instead,
-  change the `driveImg()` function near the top of `app.js`.
+  change the `driveImg()` function near the top of `app.js`. `commanders.js` is
+  the shipped default; admins can override individual cards live from the **Card
+  art** admin panel (see Admin mode) without touching the file.
 - **Run a fresh draft** without deleting history — change `EVENT_ID` in
   `firebase-config.js`.
 

@@ -54,6 +54,54 @@ function cardsForName(name, cls) {
   return imgTag(c.img, name, cls) + (c.backImg ? imgTag(c.backImg, c.back || name, cls) : "");
 }
 
+// ─────────────────────── Card-art overrides ───────────────────────
+// Admins can re-point a card's art at a different Google Drive file without a
+// redeploy. Overrides live in Firebase at `cardImages/<encKey(name)>` and are
+// merged over the static COMMANDERS list at load. We keep the shipped IDs so an
+// override can be reverted cleanly. Keyed by the EXACT name (not baseName) so
+// color variants that share a base name stay independent.
+const ORIGINAL_ART = new Map(COMMANDERS.map((c) => [c.name, { img: c.img, backImg: c.backImg }]));
+let cardImageOverrides = {};     // encKey(name) -> { img?, backImg?, ts?, by? }
+const LS_CARDIMG = "cw_card_images"; // local-preview fallback store
+
+// Pull a Google Drive file (or folder) ID out of a share link, embed URL, or a
+// bare ID pasted on its own. Returns null if nothing that looks like an ID is
+// found. Drive IDs are long, URL-safe tokens (letters/digits/-/_).
+function extractDriveId(input) {
+  const s = String(input || "").trim();
+  if (!s) return null;
+  const patterns = [
+    /\/file\/d\/([-\w]{20,})/,          // drive.google.com/file/d/<id>/view
+    /\/(?:folders|d)\/([-\w]{20,})/,     // /folders/<id>  or  lh3…/d/<id>
+    /[?&]id=([-\w]{20,})/,               // ?id=<id> / open?id=<id> / uc?id=<id>
+  ];
+  for (const re of patterns) {
+    const m = s.match(re);
+    if (m) return m[1];
+  }
+  if (/^[-\w]{20,}$/.test(s)) return s;   // bare ID
+  return null;
+}
+
+// Apply a `cardImages` snapshot onto the live commander objects. Because
+// NAME_MAP / SINGLES / PARTNERS all reference these same objects, mutating them
+// in place is enough — a re-render then shows the new art everywhere.
+function applyCardImages(snap) {
+  cardImageOverrides = snap || {};
+  for (const c of COMMANDERS) {
+    const orig = ORIGINAL_ART.get(c.name);
+    const ov = cardImageOverrides[encKey(c.name)];
+    c.img = (ov && typeof ov.img === "string") ? ov.img : orig.img;
+    c.backImg = (ov && typeof ov.backImg === "string") ? ov.backImg : orig.backImg;
+  }
+  // Reflect new art in the visible spots (result thumbnails, assignments list).
+  // The wheel canvas draws text, not art, but rebuild it if it's idle so a fresh
+  // spin's result picks up the change.
+  if (typeof renderResults === "function") renderResults();
+  if (wheel && phase === "main" && !wheel.spinning) buildMainWheel();
+  if (isAdmin) renderCardArtGrid();
+}
+
 // ───────────────────────────── Firebase ───────────────────────────
 let db, assignmentsRef, historyRef, usersRef;
 let assignments = {};            // live mirror of the DB
@@ -117,6 +165,11 @@ function initFirebase() {
       refreshAdminUI();
     }, (err) => {
       console.warn("Admin owner unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "cardImages"), (snap) => {
+      applyCardImages(snap.val());
+    }, (err) => {
+      console.warn("Card-art overrides unavailable (publish database.rules.json?):", err.message);
     });
     return true;
   } catch (e) {
@@ -879,6 +932,288 @@ async function refreshUserList() {
   renderResults();   // reflect account badges once the list has loaded
 }
 
+// ─────────────────────── Card-art admin ──────────────────────────
+// Admin-only tools to re-point card art at Drive files: per-card (drop/paste a
+// Drive link) and bulk (scan a Drive folder or paste a name→id list, review the
+// diff, apply). Writes go to `cardImages/<encKey(name)>` (or localStorage in
+// local-preview); the onValue listener merges them back over COMMANDERS.
+let bulkMatches = [];   // last-parsed bulk import rows, indexed by review checkbox
+
+const byName = () => (currentUser && currentUser.username) || "admin";
+function setCaMsg(msg, kind) {
+  const el = $("caMsg");
+  if (el) { el.textContent = msg; el.className = "auth-msg " + (kind || ""); }
+}
+function readLocalCardImages() { try { return JSON.parse(localStorage.getItem(LS_CARDIMG) || "{}") || {}; } catch { return {}; } }
+function writeLocalCardImages(o) { try { localStorage.setItem(LS_CARDIMG, JSON.stringify(o)); } catch { /* ignore */ } }
+
+// Write one face override for a commander (Firebase, or localStorage offline).
+async function writeCardOverride(name, face, id) {
+  const enc = encKey(name);
+  if (db) {
+    await update(ref(db, "cardImages/" + enc), { [face]: id, ts: Date.now(), by: byName() });
+  } else {
+    const store = readLocalCardImages();
+    store[enc] = { ...(store[enc] || {}), [face]: id, ts: Date.now(), by: byName() };
+    writeLocalCardImages(store);
+    applyCardImages(store);
+  }
+}
+
+// Set a face's art from a pasted/dropped Drive link, URL, or bare ID.
+async function setFaceOverride(name, face, rawInput) {
+  const id = extractDriveId(rawInput);
+  if (!id) return setCaMsg("Couldn't find a Drive ID in that — paste a share link or the file ID.", "err");
+  try {
+    await writeCardOverride(name, face, id);
+    setCaMsg(`Updated ${name} (${face === "img" ? "front" : "back"}).`, "ok");
+  } catch (e) { setCaMsg("Write failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// Remove a face override. If the other face has no override, drop the whole node
+// (a node with neither img nor backImg would fail the rules' validation).
+async function revertFace(name, face) {
+  const enc = encKey(name);
+  const other = face === "img" ? "backImg" : "img";
+  try {
+    if (db) {
+      const snap = await get(ref(db, "cardImages/" + enc));
+      const cur = snap.val() || {};
+      if (typeof cur[other] === "string") {
+        await update(ref(db, "cardImages/" + enc), { [face]: null, ts: Date.now(), by: byName() });
+      } else {
+        await remove(ref(db, "cardImages/" + enc));
+      }
+    } else {
+      const store = readLocalCardImages();
+      if (store[enc]) { delete store[enc][face]; if (!store[enc].img && !store[enc].backImg) delete store[enc]; }
+      writeLocalCardImages(store);
+      applyCardImages(store);
+    }
+    setCaMsg(`Reverted ${name} (${face === "img" ? "front" : "back"}).`, "ok");
+  } catch (e) { setCaMsg("Revert failed: " + e.message, "err"); }
+}
+
+// One editable face inside the admin grid.
+function faceTile(c, face) {
+  const id = face === "img" ? c.img : c.backImg;
+  const ov = cardImageOverrides[encKey(c.name)];
+  const overridden = !!(ov && typeof ov[face] === "string");
+  const label = face === "img" ? "Front" : "Back";
+  const thumb = id
+    ? `<img class="ca-thumb" src="${driveImg(id)}" alt="${escapeHtml(c.name)} ${label}" loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('broken')">`
+    : `<div class="ca-thumb ca-empty">no image</div>`;
+  return `<div class="ca-face${overridden ? " overridden" : ""}" data-name="${escapeHtml(c.name)}" data-face="${face}">` +
+    `<div class="ca-face-label">${label}${overridden ? ` <span class="ca-badge">overridden</span>` : ""}</div>` +
+    thumb +
+    `<div class="ca-drop-hint">drop a Drive link</div>` +
+    `<div class="ca-tools">` +
+      `<input class="ca-input" type="text" placeholder="link or ID" autocomplete="off">` +
+      `<button class="ca-set" type="button">Set</button>` +
+      `<button class="ca-revert" type="button"${overridden ? "" : " hidden"}>Revert</button>` +
+    `</div>` +
+  `</div>`;
+}
+
+// Render the searchable card grid (only meaningful while the panel is visible).
+function renderCardArtGrid() {
+  const grid = $("caGrid");
+  if (!grid) return;
+  const q = (($("caSearch") && $("caSearch").value) || "").trim().toLowerCase();
+  const sorted = [...COMMANDERS].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const shown = q
+    ? sorted.filter((c) => c.name.toLowerCase().includes(q) || (c.back && c.back.toLowerCase().includes(q)))
+    : sorted;
+  if ($("caCount")) $("caCount").textContent = shown.length;
+  grid.innerHTML = shown.map((c) => {
+    const hasBack = !!(ORIGINAL_ART.get(c.name).backImg || c.back);
+    return `<li class="ca-item">` +
+      `<div class="ca-faces">${faceTile(c, "img")}${hasBack ? faceTile(c, "backImg") : ""}</div>` +
+      `<div class="ca-name">${escapeHtml(c.name)}${c.back ? `<span class="ca-flip">// ${escapeHtml(c.back)}</span>` : ""}</div>` +
+    `</li>`;
+  }).join("");
+}
+
+// ── Bulk import: matching ──
+const stripExt = (s) => String(s).replace(/\.(png|jpe?g|webp|gif|bmp|tiff?|heic|avif)$/i, "");
+// Unify punctuation that differs between Drive filenames and the shipped names:
+// straight vs. curly/back apostrophes, and the various unicode dashes. Without
+// this, e.g. "Calamity's Augur" (straight ') would miss "Calamity’s Augur" (curly ’).
+const unifyPunct = (s) => String(s).replace(/[‘’‛`´]/g, "'").replace(/[‐-―]/g, "-");
+// Full label (keeps a trailing "(front)"/color) for an exact match.
+const canonName = (s) => unifyPunct(stripExt(String(s))).toLowerCase().replace(/\s+/g, " ").trim();
+// Base name (trailing "(...)" stripped) for a looser fallback match.
+const normArt = (s) => unifyPunct(baseName(stripExt(String(s)))).toLowerCase().replace(/\s+/g, " ").trim();
+
+// Index every commander by its front name (→img) and back name (→backImg), both
+// exactly and normalized (base name, no extension), so a Drive filename can be
+// matched to the right commander and face.
+function buildArtIndex() {
+  const exact = new Map();   // canonName(label) -> { commander, face }
+  const norm = new Map();    // normArt(label) -> [ { commander, face } ]
+  const add = (label, commander, face) => {
+    const k = canonName(label);
+    if (!exact.has(k)) exact.set(k, { commander, face });
+    const nk = normArt(label);
+    if (!norm.has(nk)) norm.set(nk, []);
+    norm.get(nk).push({ commander, face });
+  };
+  for (const c of COMMANDERS) {
+    add(c.name, c, "img");
+    if (c.back) add(c.back, c, "backImg");
+  }
+  return { exact, norm };
+}
+
+// Turn a list of {label, id} into review rows with a status.
+function buildMatches(files) {
+  const idx = buildArtIndex();
+  return files.map((f) => {
+    const id = extractDriveId(f.id);
+    if (!id) return { file: f.label, id: "", status: "no id" };
+    const key = canonName(f.label);
+    let hit = idx.exact.get(key);
+    let status;
+    if (!hit) {
+      const list = idx.norm.get(normArt(f.label)) || [];
+      if (list.length === 1) hit = list[0];
+      else if (list.length > 1) status = "ambiguous";
+    }
+    if (!hit) return { file: f.label, id, status: status || "unmatched" };
+    const cur = hit.face === "img" ? hit.commander.img : hit.commander.backImg;
+    return { file: f.label, id, commander: hit.commander, face: hit.face, current: cur || "", status: cur === id ? "same" : "changed" };
+  });
+}
+
+function renderReview(matches) {
+  const el = $("caReview");
+  if (!el) return;
+  if (!matches.length) { el.innerHTML = ""; return; }
+  const count = (s) => matches.filter((m) => m.status === s).length;
+  const shortId = (v) => (v ? escapeHtml(String(v).slice(0, 10)) + "…" : "—");
+  const rows = matches.map((m, i) => {
+    const canApply = m.status === "changed";
+    const target = m.commander
+      ? escapeHtml(m.commander.name) + (m.face === "backImg" ? " (back)" : "")
+      : `<span class="ca-none">— no match —</span>`;
+    return `<tr class="ca-row ca-st-${m.status.replace(/\s/g, "-")}">` +
+      `<td><input type="checkbox" class="ca-row-check" data-idx="${i}"${canApply ? " checked" : " disabled"}></td>` +
+      `<td>${escapeHtml(m.file)}</td><td>${target}</td>` +
+      `<td class="ca-id">${shortId(m.current)}</td><td class="ca-id">${shortId(m.id)}</td>` +
+      `<td><span class="ca-status">${m.status}</span></td></tr>`;
+  }).join("");
+  el.innerHTML =
+    `<div class="ca-review-sum">${count("changed")} to change · ${count("same")} unchanged · ` +
+      `${count("unmatched") + count("ambiguous") + count("no id")} unmatched</div>` +
+    `<div class="ca-review-scroll"><table class="ca-table">` +
+      `<thead><tr><th></th><th>File</th><th>Commander</th><th>Current</th><th>New</th><th>Status</th></tr></thead>` +
+      `<tbody>${rows}</tbody></table></div>` +
+    `<button id="caApplyBtn" class="ca-apply" type="button">Apply selected</button>`;
+}
+
+async function applyReview() {
+  const chosen = [];
+  $("caReview").querySelectorAll(".ca-row-check").forEach((b) => {
+    if (b.checked && !b.disabled) chosen.push(bulkMatches[+b.dataset.idx]);
+  });
+  if (!chosen.length) return setCaMsg("Nothing selected to apply.", "err");
+  const by = byName(), ts = Date.now();
+  try {
+    if (db) {
+      const updates = {};
+      for (const m of chosen) {
+        const enc = encKey(m.commander.name);
+        updates[enc + "/" + m.face] = m.id;
+        updates[enc + "/ts"] = ts;
+        updates[enc + "/by"] = by;
+      }
+      await update(ref(db, "cardImages"), updates);
+    } else {
+      const store = readLocalCardImages();
+      for (const m of chosen) {
+        const enc = encKey(m.commander.name);
+        store[enc] = { ...(store[enc] || {}), [m.face]: m.id, ts, by };
+      }
+      writeLocalCardImages(store);
+      applyCardImages(store);
+    }
+    setCaMsg(`Applied ${chosen.length} update${chosen.length === 1 ? "" : "s"}.`, "ok");
+    if (firebaseReady) await new Promise((r) => setTimeout(r, 60)); // let onValue settle
+    bulkMatches = buildMatches(bulkMatches.map((m) => ({ label: m.file, id: m.id })));
+    renderReview(bulkMatches);
+  } catch (e) { setCaMsg("Apply failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// ── Bulk import: inputs ──
+async function driveListFolder(folderId, key) {
+  const out = [];
+  let pageToken = "";
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed=false`,
+      key,
+      fields: "nextPageToken,files(id,name,mimeType)",
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await fetch("https://www.googleapis.com/drive/v3/files?" + params.toString());
+    if (!res.ok) {
+      let msg = res.status + " " + res.statusText;
+      try { const e = await res.json(); if (e.error && e.error.message) msg = e.error.message; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    (data.files || []).forEach((f) => out.push(f));
+    pageToken = data.nextPageToken || "";
+  } while (pageToken);
+  return out;
+}
+
+async function onScanFolder() {
+  const folderId = extractDriveId($("caFolder").value);
+  if (!folderId) return setCaMsg("Paste the Drive folder's link or ID.", "err");
+  const key = firebaseConfig.apiKey;
+  if (!key || key === "REPLACE_ME") return setCaMsg("No API key available — use the paste box below instead.", "err");
+  setCaMsg("Scanning folder…", "");
+  try {
+    const files = await driveListFolder(folderId, key);
+    const imgs = files.filter((f) => !f.mimeType || f.mimeType.startsWith("image/"));
+    if (!imgs.length) {
+      return setCaMsg("No image files returned. Make sure the folder is shared “Anyone with the link” and the Drive API is enabled — or use the paste box below.", "err");
+    }
+    bulkMatches = buildMatches(imgs.map((f) => ({ label: f.name, id: f.id })));
+    renderReview(bulkMatches);
+    setCaMsg(`Found ${imgs.length} image${imgs.length === 1 ? "" : "s"} — review below.`, "ok");
+  } catch (e) {
+    setCaMsg("Folder scan failed: " + e.message + ". The Drive API may be off, the folder not public, or the key restricted — use the paste box below.", "err");
+  }
+}
+
+function onParsePaste() {
+  const raw = $("caPaste").value.trim();
+  if (!raw) return setCaMsg("Paste a “Name, driveId” list (or JSON) first.", "err");
+  let files = [];
+  try {
+    const j = JSON.parse(raw);
+    if (Array.isArray(j)) files = j.map((x) => ({ label: x.name || x.label || x[0], id: x.id || x.img || x[1] }));
+    else if (j && typeof j === "object") files = Object.entries(j).map(([name, id]) => ({ label: name, id }));
+  } catch {
+    // CSV / lines: split on the LAST comma so commander names with commas survive.
+    files = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((line) => {
+      const i = line.lastIndexOf(",");
+      if (i < 0) return null;
+      return { label: line.slice(0, i).trim().replace(/^["']|["']$/g, ""), id: line.slice(i + 1).trim() };
+    }).filter(Boolean);
+  }
+  files = files.filter((f) => f && f.label && f.id);
+  if (!files.length) return setCaMsg("Couldn't parse any “name, id” rows.", "err");
+  bulkMatches = buildMatches(files);
+  renderReview(bulkMatches);
+  setCaMsg(`Parsed ${files.length} row${files.length === 1 ? "" : "s"} — review below.`, "ok");
+}
+
 // Attach the admin button handlers once. The buttons live in the DOM always
 // (hidden until you're admin); wiring them up front avoids double-binding when
 // admin status flips on login/logout.
@@ -895,6 +1230,55 @@ function wireAdmin() {
   $("storeResetBtn").addEventListener("click", storeEventAndReset);
   $("maType").addEventListener("change", populateManualOptions);
   $("maAssignBtn").addEventListener("click", manualAssign);
+  wireCardArt();
+}
+
+// Card-art panel listeners (delegated so they survive grid/review re-renders).
+function wireCardArt() {
+  const grid = $("caGrid");
+  if (grid) {
+    grid.addEventListener("click", (e) => {
+      const face = e.target.closest(".ca-face");
+      if (!face) return;
+      const { name, face: f } = face.dataset;
+      if (e.target.closest(".ca-set")) {
+        const inp = face.querySelector(".ca-input");
+        setFaceOverride(name, f, inp ? inp.value : "");
+      } else if (e.target.closest(".ca-revert")) {
+        revertFace(name, f);
+      }
+    });
+    grid.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || !e.target.classList.contains("ca-input")) return;
+      const face = e.target.closest(".ca-face");
+      setFaceOverride(face.dataset.name, face.dataset.face, e.target.value);
+    });
+    grid.addEventListener("dragover", (e) => {
+      const face = e.target.closest(".ca-face");
+      if (!face) return;
+      e.preventDefault();
+      face.classList.add("drop");
+    });
+    grid.addEventListener("dragleave", (e) => {
+      const face = e.target.closest(".ca-face");
+      if (face) face.classList.remove("drop");
+    });
+    grid.addEventListener("drop", (e) => {
+      const face = e.target.closest(".ca-face");
+      if (!face) return;
+      e.preventDefault();
+      face.classList.remove("drop");
+      const dt = e.dataTransfer;
+      const data = (dt.getData("text/uri-list") || dt.getData("text/plain") || "").trim();
+      setFaceOverride(face.dataset.name, face.dataset.face, data);
+    });
+  }
+  if ($("caSearch")) $("caSearch").addEventListener("input", renderCardArtGrid);
+  if ($("caScanBtn")) $("caScanBtn").addEventListener("click", onScanFolder);
+  if ($("caParseBtn")) $("caParseBtn").addEventListener("click", onParsePaste);
+  if ($("caReview")) $("caReview").addEventListener("click", (e) => {
+    if (e.target.id === "caApplyBtn") applyReview();
+  });
 }
 
 // Show/hide admin tools based on (logged-in account === claimed owner). #admin
@@ -905,6 +1289,7 @@ function refreshAdminUI() {
 
   $("adminBar").style.display = isAdmin ? "flex" : "none";
   $("adminPanel").style.display = isAdmin ? "block" : "none";
+  $("cardArtPanel").style.display = isAdmin ? "block" : "none";
 
   const canClaim = location.hash === "#admin" && !owner;
   $("adminClaim").style.display = canClaim ? "flex" : "none";
@@ -915,7 +1300,7 @@ function refreshAdminUI() {
     $("claimBtn").disabled = !currentUser;
   }
 
-  if (isAdmin) { populateManualOptions(); refreshUserList(); }
+  if (isAdmin) { populateManualOptions(); refreshUserList(); renderCardArtGrid(); }
   renderResults();   // reflect re-roll / remove buttons
 }
 
@@ -965,8 +1350,12 @@ function boot() {
   });
   wireAdmin();
   const configured = initFirebase();
-  // Local-preview mode (no Firebase): the owner lives in localStorage.
-  if (!configured) { try { adminOwnerKey = localStorage.getItem(LS_ADMIN) || null; } catch { /* ignore */ } }
+  // Local-preview mode (no Firebase): the owner + card-art overrides live in
+  // localStorage so the admin tools are still testable.
+  if (!configured) {
+    try { adminOwnerKey = localStorage.getItem(LS_ADMIN) || null; } catch { /* ignore */ }
+    try { applyCardImages(JSON.parse(localStorage.getItem(LS_CARDIMG) || "null")); } catch { /* ignore */ }
+  }
   window.addEventListener("hashchange", refreshAdminUI);
   refreshAdminUI();
   updateSpinButton();

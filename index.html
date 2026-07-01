@@ -44,6 +44,32 @@
     <p class="admin-hint">“Store event &amp; reset” keeps every result, then refills the pool — players just can’t re-roll the exact result they already got. Use the <b>↻</b> button on a result to let someone spin again.</p>
   </div>
 
+  <div id="cardArtPanel" class="admin-panel card-art-panel" style="display:none">
+    <h3>Card art</h3>
+    <p class="admin-hint">Re-point a card at a different Google Drive image without a redeploy — drop a Drive link on a face or paste its link/ID. Changes go live for everyone. Cards must be shared “Anyone with the link”.</p>
+
+    <details class="ca-bulk">
+      <summary>Bulk import from the new Drive folder</summary>
+      <div class="ca-bulk-body">
+        <div class="ca-bulk-row">
+          <input id="caFolder" type="text" placeholder="New Drive folder link or ID" autocomplete="off" />
+          <button id="caScanBtn" type="button">Scan folder</button>
+        </div>
+        <p class="admin-hint">Folder scan needs the Google Drive API enabled on the project and the folder shared publicly. If it doesn’t list, paste a mapping instead:</p>
+        <textarea id="caPaste" rows="4" placeholder="One per line:  Commander Name, driveIdOrLink&#10;…or paste JSON: { &quot;Commander Name&quot;: &quot;driveId&quot; }"></textarea>
+        <button id="caParseBtn" type="button">Match pasted list</button>
+        <div id="caReview" class="ca-review"></div>
+      </div>
+    </details>
+
+    <div class="ca-search-row">
+      <input id="caSearch" type="search" placeholder="Filter cards…" autocomplete="off" />
+      <span class="admin-hint"><span id="caCount">0</span> cards</span>
+    </div>
+    <ul id="caGrid" class="ca-grid"></ul>
+    <div id="caMsg" class="auth-msg"></div>
+  </div>
+
   <main>
     <section class="wheel-col">
       <div class="auth-row">

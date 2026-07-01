@@ -1,11 +1,16 @@
 import { COMMANDERS } from "./commanders.js";
+import { firebaseConfig } from "./firebase-config.js";
 
-// Static reference gallery — no Firebase. Renders every commander's card art in
-// alphabetical order (front + back face for flip cards), with a simple filter.
+// Static reference gallery. Renders every commander's card art in alphabetical
+// order (front + back face for flip cards), with a simple filter. It reads (only)
+// the admin card-art overrides from Firebase so it stays in sync with the wheel,
+// but needs no login and falls back to the shipped art if that read fails.
 
 // Same Google Drive thumbnail endpoint the wheel uses. Cards must be shared
 // "Anyone with the link"; a broken image hides itself via the onerror handler.
 const driveImg = (id) => `https://lh3.googleusercontent.com/d/${id}=w480`;
+// Firebase-safe key from a commander name (must match encKey() in app.js).
+const encKey = (s) => encodeURIComponent(String(s)).replace(/\./g, "%2E");
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (m) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -47,3 +52,24 @@ function render(filter = "") {
 
 render();
 if (search) search.addEventListener("input", (e) => render(e.target.value));
+
+// Pull admin card-art overrides (read-only) and re-render if any card's art was
+// re-pointed. Fast first paint uses the shipped IDs; this just refreshes them.
+(async function applyOverrides() {
+  const url = firebaseConfig.databaseURL;
+  if (!url || url.includes("REPLACE_ME")) return;
+  try {
+    const res = await fetch(url.replace(/\/$/, "") + "/cardImages.json");
+    if (!res.ok) return;
+    const ov = await res.json();
+    if (!ov) return;
+    let changed = false;
+    for (const c of COMMANDERS) {
+      const o = ov[encKey(c.name)];
+      if (!o) continue;
+      if (typeof o.img === "string" && o.img !== c.img) { c.img = o.img; changed = true; }
+      if (typeof o.backImg === "string" && o.backImg !== c.backImg) { c.backImg = o.backImg; changed = true; }
+    }
+    if (changed) render(search ? search.value : "");
+  } catch { /* offline / unconfigured — the shipped art is fine */ }
+})();
