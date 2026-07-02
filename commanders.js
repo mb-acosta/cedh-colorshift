@@ -474,7 +474,7 @@ export const COMMANDERS = [
   {
     "name": "Sakashima of a Thousand Faces",
     "back": null,
-    "partner": false,
+    "partner": true,
     "img": "1-RZZAMk47rV4i9kIlBd61thPkrT125Xl",
     "backImg": null
   },
