@@ -334,7 +334,10 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 /* Single-card import form (request A) */
 .ca-add-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 10px; }
 .ca-add-field { display: flex; flex-direction: column; gap: 4px; font-size: .8rem; color: var(--muted); }
-.ca-add-field input { padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.15);
+/* Override the shared `.ca-bulk input[type="text"] { flex: 1 1 220px }` rule:
+   these sit in a COLUMN flex, where that 220px basis would balloon the height. */
+.ca-add .ca-add-field input { flex: none; width: 100%; box-sizing: border-box;
+  padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.15);
   background: var(--panel); color: var(--ink); font: inherit; }
 .ca-add-toggles { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0; }
 .ca-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: .86rem; cursor: pointer; user-select: none; }
