@@ -18,10 +18,22 @@ import {
 const PARTNER_ODDS = 0.20;
 
 // ──────────────────────────── Data split ──────────────────────────
-const SINGLES = COMMANDERS.filter((c) => !c.partner);
-const PARTNERS = COMMANDERS.filter((c) => c.partner);
+// The shipped list is the baseline; admins can add "custom" cards and flip a
+// card's partner status at runtime (both persisted in Firebase — see the
+// cardMeta / customCards nodes below). COMMANDERS is the live, combined list
+// everything reads; SINGLES / PARTNERS / NAME_MAP are DERIVED from it and
+// rebuilt (rebuildIndexes) whenever it changes.
+const STATIC_COMMANDERS = COMMANDERS.map((c) => ({ ...c }));   // immutable snapshot of shipped data
 const comboKey = (a, b) => [a, b].sort().join("  ||  ");
-const NAME_MAP = new Map(COMMANDERS.map((c) => [c.name, c]));
+let SINGLES = [];
+let PARTNERS = [];
+let NAME_MAP = new Map();
+function rebuildIndexes() {
+  SINGLES = COMMANDERS.filter((c) => !c.partner);
+  PARTNERS = COMMANDERS.filter((c) => c.partner);
+  NAME_MAP = new Map(COMMANDERS.map((c) => [c.name, c]));
+}
+rebuildIndexes();
 
 // Color variants of one commander share a "base name" — the part before a
 // trailing "(...)", e.g. "Dargo, the Shipwrecker (Black)" / "(Blue)" both base
@@ -60,9 +72,13 @@ function cardsForName(name, cls) {
 // merged over the static COMMANDERS list at load. We keep the shipped IDs so an
 // override can be reverted cleanly. Keyed by the EXACT name (not baseName) so
 // color variants that share a base name stay independent.
-const ORIGINAL_ART = new Map(COMMANDERS.map((c) => [c.name, { img: c.img, backImg: c.backImg }]));
+let ORIGINAL_ART = new Map(COMMANDERS.map((c) => [c.name, { img: c.img, backImg: c.backImg }]));
 let cardImageOverrides = {};     // encKey(name) -> { img?, backImg?, ts?, by? }
-const LS_CARDIMG = "cw_card_images"; // local-preview fallback store
+let cardMetaOverrides = {};      // encKey(name) -> { partner: bool }  — partner-status overrides
+let customCards = {};            // encKey(name) -> { name, back?, img, backImg? }  — admin-added cards
+const LS_CARDIMG = "cw_card_images";   // local-preview fallback stores
+const LS_CARDMETA = "cw_card_meta";
+const LS_CUSTOMCARDS = "cw_custom_cards";
 
 // Pull a Google Drive file (or folder) ID out of a share link, embed URL, or a
 // bare ID pasted on its own. Returns null if nothing that looks like an ID is
@@ -83,23 +99,56 @@ function extractDriveId(input) {
   return null;
 }
 
-// Apply a `cardImages` snapshot onto the live commander objects. Because
-// NAME_MAP / SINGLES / PARTNERS all reference these same objects, mutating them
-// in place is enough — a re-render then shows the new art everywhere.
-function applyCardImages(snap) {
-  cardImageOverrides = snap || {};
-  for (const c of COMMANDERS) {
-    const orig = ORIGINAL_ART.get(c.name);
-    const ov = cardImageOverrides[encKey(c.name)];
-    c.img = (ov && typeof ov.img === "string") ? ov.img : orig.img;
-    c.backImg = (ov && typeof ov.backImg === "string") ? ov.backImg : orig.backImg;
+// Rebuild the live COMMANDERS list from the shipped baseline + admin-added
+// custom cards, then layer on the partner-status (cardMeta) and card-art
+// (cardImages) overrides. SINGLES / PARTNERS / NAME_MAP / ORIGINAL_ART are all
+// derived here, so one rebuild propagates a change everywhere.
+function rebuildCommanders() {
+  const list = STATIC_COMMANDERS.map((c) => ({ ...c }));
+  const staticNames = new Set(list.map((c) => c.name));
+  for (const enc in customCards) {
+    const cc = customCards[enc];
+    if (!cc || !cc.name || staticNames.has(cc.name)) continue;   // skip blanks / name clashes
+    list.push({
+      name: cc.name, back: cc.back || null, partner: false,
+      img: cc.img || null, backImg: cc.backImg || null, custom: true,
+    });
   }
+  // Baseline art (shipped or as-imported) so a Revert has something to fall back to.
+  ORIGINAL_ART = new Map(list.map((c) => [c.name, { img: c.img, backImg: c.backImg }]));
+  for (const c of list) {
+    const enc = encKey(c.name);
+    const meta = cardMetaOverrides[enc];
+    if (meta && typeof meta.partner === "boolean") c.partner = meta.partner;
+    const ov = cardImageOverrides[enc];
+    if (ov && typeof ov.img === "string") c.img = ov.img;
+    if (ov && typeof ov.backImg === "string") c.backImg = ov.backImg;
+  }
+  // Swap into the live array in place (keep the const binding everyone imports).
+  COMMANDERS.length = 0;
+  COMMANDERS.push(...list);
+  rebuildIndexes();
+}
+
+// Each card-data Firebase node has its own mirror; any of them changing merges
+// back over the list and re-renders every spot card data is shown.
+function applyCardImages(snap)  { cardImageOverrides = snap || {}; onCardDataChanged(); }
+function applyCardMeta(snap)    { cardMetaOverrides = snap || {}; onCardDataChanged(); }
+function applyCustomCards(snap) { customCards = snap || {}; onCardDataChanged(); }
+
+function onCardDataChanged() {
+  rebuildCommanders();
   // Reflect new art in the visible spots (result thumbnails, assignments list).
-  // The wheel canvas draws text, not art, but rebuild it if it's idle so a fresh
-  // spin's result picks up the change.
+  // The wheel canvas draws text, not art, but a rebuild also adds/removes cards
+  // and flips partner status, so refresh it (and the spin button + admin
+  // dropdowns) when idle so the next spin picks the change up.
   if (typeof renderResults === "function") renderResults();
   if (wheel && phase === "main" && !wheel.spinning) buildMainWheel();
-  if (isAdmin && !adminCollapsed) renderCardArtGrid();
+  if (typeof updateSpinButton === "function" && wheel && !wheel.spinning) updateSpinButton();
+  if (isAdmin) {
+    populateManualOptions();
+    if (!adminCollapsed) renderCardArtGrid();
+  }
 }
 
 // ───────────────────────────── Firebase ───────────────────────────
@@ -172,6 +221,16 @@ function initFirebase() {
       applyCardImages(snap.val());
     }, (err) => {
       console.warn("Card-art overrides unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "cardMeta"), (snap) => {
+      applyCardMeta(snap.val());
+    }, (err) => {
+      console.warn("Partner overrides unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "customCards"), (snap) => {
+      applyCustomCards(snap.val());
+    }, (err) => {
+      console.warn("Custom cards unavailable (publish database.rules.json?):", err.message);
     });
     return true;
   } catch (e) {
@@ -948,6 +1007,10 @@ function setCaMsg(msg, kind) {
 }
 function readLocalCardImages() { try { return JSON.parse(localStorage.getItem(LS_CARDIMG) || "{}") || {}; } catch { return {}; } }
 function writeLocalCardImages(o) { try { localStorage.setItem(LS_CARDIMG, JSON.stringify(o)); } catch { /* ignore */ } }
+function readLocalCardMeta() { try { return JSON.parse(localStorage.getItem(LS_CARDMETA) || "{}") || {}; } catch { return {}; } }
+function writeLocalCardMeta(o) { try { localStorage.setItem(LS_CARDMETA, JSON.stringify(o)); } catch { /* ignore */ } }
+function readLocalCustomCards() { try { return JSON.parse(localStorage.getItem(LS_CUSTOMCARDS) || "{}") || {}; } catch { return {}; } }
+function writeLocalCustomCards(o) { try { localStorage.setItem(LS_CUSTOMCARDS, JSON.stringify(o)); } catch { /* ignore */ } }
 
 // Write one face override for a commander (Firebase, or localStorage offline).
 async function writeCardOverride(name, face, id) {
@@ -996,6 +1059,80 @@ async function revertFace(name, face) {
   } catch (e) { setCaMsg("Revert failed: " + e.message, "err"); }
 }
 
+// Flip a card's partner status (request B). Stored per-card in cardMeta and
+// applied over both shipped and custom cards on rebuild, so the change flows
+// straight into PARTNERS, the partner wheel, and the manual-assign dropdowns.
+async function setPartnerFlag(name, on) {
+  const enc = encKey(name);
+  try {
+    if (db) {
+      await update(ref(db, "cardMeta/" + enc), { partner: !!on, ts: Date.now(), by: byName() });
+    } else {
+      const store = readLocalCardMeta();
+      store[enc] = { ...(store[enc] || {}), partner: !!on, ts: Date.now(), by: byName() };
+      writeLocalCardMeta(store);
+      applyCardMeta(store);
+    }
+    setCaMsg(`${name} is ${on ? "now" : "no longer"} a partner.`, "ok");
+  } catch (e) { setCaMsg("Partner update failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// Add a brand-new commander to the pool (request A). Identity + art go to
+// customCards; partner status (if any) goes to cardMeta so this and the grid
+// toggle share one source of truth. Rejects names that already exist.
+async function addCustomCard({ name, back, img, backImg, partner }) {
+  name = String(name || "").trim();
+  back = String(back || "").trim();
+  if (!name) { setCaMsg("Give the card a name.", "err"); return false; }
+  if (NAME_MAP.has(name)) { setCaMsg(`“${name}” is already in the list — edit it in the grid below.`, "err"); return false; }
+  const frontId = extractDriveId(img);
+  if (!frontId) { setCaMsg("Front image: paste a Drive share link or file ID.", "err"); return false; }
+  let backId = null;
+  if (backImg != null && String(backImg).trim() !== "") {
+    backId = extractDriveId(backImg);
+    if (!backId) { setCaMsg("Back image: paste a Drive share link or file ID (or turn off “two faces”).", "err"); return false; }
+  }
+  const enc = encKey(name);
+  const ts = Date.now(), by = byName();
+  const rec = { name, img: frontId, ts, by };
+  if (back) rec.back = back;
+  if (backId) rec.backImg = backId;
+  try {
+    if (db) {
+      const updates = { ["customCards/" + enc]: rec };
+      if (partner) updates["cardMeta/" + enc] = { partner: true, ts, by };
+      await update(ref(db), updates);
+    } else {
+      const cc = readLocalCustomCards(); cc[enc] = rec; writeLocalCustomCards(cc);
+      if (partner) { const m = readLocalCardMeta(); m[enc] = { partner: true, ts, by }; writeLocalCardMeta(m); customCards = cc; applyCardMeta(m); }
+      else applyCustomCards(cc);
+    }
+    setCaMsg(`Added “${name}”.`, "ok");
+    return true;
+  } catch (e) { setCaMsg("Add failed: " + e.message + " (publish database.rules.json?)", "err"); return false; }
+}
+
+// Remove an admin-added card and any of its overrides. Only custom cards expose
+// this — shipped cards can't be deleted from the UI.
+async function deleteCustomCard(name) {
+  const enc = encKey(name);
+  try {
+    if (db) {
+      await Promise.all([
+        remove(ref(db, "customCards/" + enc)),
+        remove(ref(db, "cardMeta/" + enc)),
+        remove(ref(db, "cardImages/" + enc)),
+      ]);
+    } else {
+      const cc = readLocalCustomCards(); delete cc[enc]; writeLocalCustomCards(cc);
+      const m = readLocalCardMeta(); delete m[enc]; writeLocalCardMeta(m);
+      const im = readLocalCardImages(); delete im[enc]; writeLocalCardImages(im);
+      cardMetaOverrides = m; cardImageOverrides = im; applyCustomCards(cc);
+    }
+    setCaMsg(`Removed “${name}”.`, "ok");
+  } catch (e) { setCaMsg("Remove failed: " + e.message, "err"); }
+}
+
 // One editable face inside the admin grid.
 function faceTile(c, face) {
   const id = face === "img" ? c.img : c.backImg;
@@ -1029,9 +1166,18 @@ function renderCardArtGrid() {
   if ($("caCount")) $("caCount").textContent = shown.length;
   grid.innerHTML = shown.map((c) => {
     const hasBack = !!(ORIGINAL_ART.get(c.name).backImg || c.back);
-    return `<li class="ca-item">` +
+    const nm = escapeHtml(c.name);
+    const del = c.custom
+      ? `<button class="ca-del" type="button" data-name="${nm}" title="Remove this custom card">✕ remove</button>`
+      : "";
+    return `<li class="ca-item${c.custom ? " custom" : ""}">` +
       `<div class="ca-faces">${faceTile(c, "img")}${hasBack ? faceTile(c, "backImg") : ""}</div>` +
-      `<div class="ca-name">${escapeHtml(c.name)}${c.back ? `<span class="ca-flip">// ${escapeHtml(c.back)}</span>` : ""}</div>` +
+      `<div class="ca-name">${nm}${c.back ? `<span class="ca-flip">// ${escapeHtml(c.back)}</span>` : ""}` +
+        `${c.custom ? ` <span class="ca-custom-tag">added</span>` : ""}</div>` +
+      `<div class="ca-meta">` +
+        `<label class="ca-partner"><input type="checkbox" class="ca-partner-check" data-name="${nm}"${c.partner ? " checked" : ""}> 🤝 partner</label>` +
+        del +
+      `</div>` +
     `</li>`;
   }).join("");
 }
@@ -1216,6 +1362,33 @@ function onParsePaste() {
   setCaMsg(`Parsed ${files.length} row${files.length === 1 ? "" : "s"} — review below.`, "ok");
 }
 
+// ── Single-card import (request A) ──
+// Show/hide the back-face inputs when "two faces" is toggled.
+function syncNewCardFaces() {
+  const on = $("caNew2Faces") && $("caNew2Faces").checked;
+  const back = $("caNewBackWrap");
+  if (back) back.style.display = on ? "" : "none";
+}
+
+async function onAddSingleCard() {
+  const twoFaces = $("caNew2Faces") && $("caNew2Faces").checked;
+  const ok = await addCustomCard({
+    name: $("caNewName").value,
+    img: $("caNewImg").value,
+    back: twoFaces ? $("caNewBackName").value : "",
+    backImg: twoFaces ? $("caNewBackImg").value : "",
+    partner: $("caNewPartner") && $("caNewPartner").checked,
+  });
+  if (ok) {
+    // Clear the form for the next card; keep the panel open on the new grid entry.
+    ["caNewName", "caNewImg", "caNewBackName", "caNewBackImg"].forEach((id) => { if ($(id)) $(id).value = ""; });
+    if ($("caNew2Faces")) $("caNew2Faces").checked = false;
+    if ($("caNewPartner")) $("caNewPartner").checked = false;
+    syncNewCardFaces();
+    if ($("caSearch")) { $("caSearch").value = ""; renderCardArtGrid(); }
+  }
+}
+
 // Attach the admin button handlers once. The buttons live in the DOM always
 // (hidden until you're admin); wiring them up front avoids double-binding when
 // admin status flips on login/logout.
@@ -1245,6 +1418,12 @@ function wireCardArt() {
   const grid = $("caGrid");
   if (grid) {
     grid.addEventListener("click", (e) => {
+      const del = e.target.closest(".ca-del");
+      if (del) {
+        const name = del.dataset.name;
+        if (confirm(`Remove the custom card “${name}”? This deletes its art and partner overrides too.`)) deleteCustomCard(name);
+        return;
+      }
       const face = e.target.closest(".ca-face");
       if (!face) return;
       const { name, face: f } = face.dataset;
@@ -1254,6 +1433,11 @@ function wireCardArt() {
       } else if (e.target.closest(".ca-revert")) {
         revertFace(name, f);
       }
+    });
+    // Partner toggle (request B) — delegated so it survives grid re-renders.
+    grid.addEventListener("change", (e) => {
+      const cb = e.target.closest(".ca-partner-check");
+      if (cb) setPartnerFlag(cb.dataset.name, cb.checked);
     });
     grid.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || !e.target.classList.contains("ca-input")) return;
@@ -1286,6 +1470,9 @@ function wireCardArt() {
   if ($("caReview")) $("caReview").addEventListener("click", (e) => {
     if (e.target.id === "caApplyBtn") applyReview();
   });
+  // Single-card import (request A).
+  if ($("caNew2Faces")) $("caNew2Faces").addEventListener("change", syncNewCardFaces);
+  if ($("caAddBtn")) $("caAddBtn").addEventListener("click", onAddSingleCard);
 }
 
 // Show/hide admin tools based on (logged-in account === claimed owner). #admin
@@ -1370,7 +1557,10 @@ function boot() {
   // localStorage so the admin tools are still testable.
   if (!configured) {
     try { adminOwnerKey = localStorage.getItem(LS_ADMIN) || null; } catch { /* ignore */ }
-    try { applyCardImages(JSON.parse(localStorage.getItem(LS_CARDIMG) || "null")); } catch { /* ignore */ }
+    // Seed the mirrors, then a single rebuild so custom cards + partner flips show.
+    cardImageOverrides = readLocalCardImages();
+    cardMetaOverrides = readLocalCardMeta();
+    applyCustomCards(readLocalCustomCards());
   }
   window.addEventListener("hashchange", refreshAdminUI);
   refreshAdminUI();

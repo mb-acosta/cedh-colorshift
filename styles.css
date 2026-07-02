@@ -299,8 +299,8 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 
 /* Editable card grid */
 .ca-search-row { display: flex; gap: 10px; align-items: center; margin: 4px 0 10px; }
-.ca-grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); max-height: 70vh; overflow-y: auto; }
+.ca-grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); max-height: 78vh; overflow-y: auto; }
 .ca-item { background: var(--panel); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 8px; }
 .ca-faces { display: flex; gap: 6px; justify-content: center; }
 .ca-face { flex: 1 1 0; min-width: 0; border: 2px dashed transparent; border-radius: 8px; padding: 4px; text-align: center; }
@@ -319,3 +319,24 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
   background: var(--panel2); color: var(--ink); border: 1px solid rgba(255,255,255,.18); }
 .ca-name { font-size: .82rem; text-align: center; margin-top: 6px; word-break: break-word; line-height: 1.35; }
 .ca-flip { color: var(--muted); font-size: .82em; display: block; }
+
+/* Per-card partner toggle (request B) + custom-card controls */
+.ca-item.custom { border-color: rgba(231,193,74,.4); }
+.ca-custom-tag { color: var(--gold); font-size: .68rem; }
+.ca-meta { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.07); }
+.ca-partner { display: inline-flex; align-items: center; gap: 5px; font-size: .8rem; cursor: pointer; user-select: none; }
+.ca-partner input { accent-color: var(--gold); width: 15px; height: 15px; cursor: pointer; }
+.ca-del { background: none; border: 1px solid rgba(255,120,120,.35); color: #ff9a9a;
+  padding: 2px 8px; border-radius: 6px; font-size: .72rem; cursor: pointer; }
+.ca-del:hover { background: rgba(255,80,80,.12); border-color: rgba(255,120,120,.6); }
+
+/* Single-card import form (request A) */
+.ca-add-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 10px; }
+.ca-add-field { display: flex; flex-direction: column; gap: 4px; font-size: .8rem; color: var(--muted); }
+.ca-add-field input { padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.15);
+  background: var(--panel); color: var(--ink); font: inherit; }
+.ca-add-toggles { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0; }
+.ca-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: .86rem; cursor: pointer; user-select: none; }
+.ca-toggle input { accent-color: var(--gold); width: 16px; height: 16px; cursor: pointer; }
+.ca-add #caAddBtn { background: var(--gold); color: #1a1500; border: none; }
