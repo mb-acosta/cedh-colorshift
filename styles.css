@@ -257,6 +257,14 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 .g-name { font-size: .9rem; text-align: center; word-break: break-word; line-height: 1.4; }
 .g-flip { color: var(--muted); font-size: .85em; display: block; }
 .g-tag { color: var(--gold); font-size: .74rem; display: block; margin-top: 2px; }
+.g-tag.pending { color: var(--gold); }
+.g-tag.removal { color: #ffb27a; }
+.g-tag.retired { color: var(--muted); }
+
+/* Admin-only staged sections on the reference page */
+.gallery-admin-sec { margin-top: 28px; padding-top: 16px; border-top: 1px dashed rgba(231,193,74,.35); }
+.gallery-admin-head { font-size: 1rem; color: var(--gold); margin: 0 0 12px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.gallery-admin-note { color: var(--muted); font-size: .78rem; font-weight: 400; }
 .g-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 30px; }
 
 /* Hover-to-zoom — only on devices with a real pointer (mouse), i.e. PC. */
@@ -327,9 +335,23 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
   margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.07); }
 .ca-partner { display: inline-flex; align-items: center; gap: 5px; font-size: .8rem; cursor: pointer; user-select: none; }
 .ca-partner input { accent-color: var(--gold); width: 15px; height: 15px; cursor: pointer; }
-.ca-del { background: none; border: 1px solid rgba(255,120,120,.35); color: #ff9a9a;
+
+/* Staged roster: status badges + per-card actions in the admin grid */
+.ca-status-tag { font-size: .68rem; display: block; margin-top: 2px; }
+.ca-status-tag.pending { color: var(--gold); }
+.ca-status-tag.removal { color: #ffb27a; }
+.ca-status-tag.retired { color: var(--muted); }
+.ca-item.st-pending { border-color: rgba(231,193,74,.45); border-style: dashed; }
+.ca-item.st-pendingRemoval { border-color: rgba(255,178,122,.5); }
+.ca-item.st-hidden { border-color: rgba(159,179,196,.3); opacity: .82; }
+.ca-status-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.ca-status-btn { background: var(--panel2); color: var(--ink); border: 1px solid rgba(255,255,255,.18);
   padding: 2px 8px; border-radius: 6px; font-size: .72rem; cursor: pointer; }
-.ca-del:hover { background: rgba(255,80,80,.12); border-color: rgba(255,120,120,.6); }
+.ca-status-btn:hover { border-color: var(--gold); }
+.ca-status-btn.ok { border-color: rgba(95,208,138,.4); color: var(--ok); }
+.ca-status-btn.ok:hover { background: rgba(95,208,138,.12); border-color: rgba(95,208,138,.6); }
+.ca-status-btn.danger { border-color: rgba(255,120,120,.35); color: #ff9a9a; }
+.ca-status-btn.danger:hover { background: rgba(255,80,80,.12); border-color: rgba(255,120,120,.6); }
 
 /* Single-card import form (request A) */
 .ca-add-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 10px; }

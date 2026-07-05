@@ -29,8 +29,14 @@ let SINGLES = [];
 let PARTNERS = [];
 let NAME_MAP = new Map();
 function rebuildIndexes() {
-  SINGLES = COMMANDERS.filter((c) => !c.partner);
-  PARTNERS = COMMANDERS.filter((c) => c.partner);
+  // "pending" (future upload) and "hidden" (retired) cards are kept in
+  // COMMANDERS / NAME_MAP — so the admin grid and result thumbnails can still
+  // render them — but are excluded from SINGLES / PARTNERS so they never reach
+  // the wheel (guest rolls read these too). "pendingRemoval" stays rollable
+  // until "Store event & reset pool" flips it to "hidden".
+  const rollable = COMMANDERS.filter((c) => c.status !== "pending" && c.status !== "hidden");
+  SINGLES = rollable.filter((c) => !c.partner);
+  PARTNERS = rollable.filter((c) => c.partner);
   NAME_MAP = new Map(COMMANDERS.map((c) => [c.name, c]));
 }
 rebuildIndexes();
@@ -76,9 +82,11 @@ let ORIGINAL_ART = new Map(COMMANDERS.map((c) => [c.name, { img: c.img, backImg:
 let cardImageOverrides = {};     // encKey(name) -> { img?, backImg?, ts?, by? }
 let cardMetaOverrides = {};      // encKey(name) -> { partner: bool }  — partner-status overrides
 let customCards = {};            // encKey(name) -> { name, back?, img, backImg? }  — admin-added cards
+let cardStatusOverrides = {};    // encKey(name) -> { state, ts?, by? }  — staged roster status (see below)
 const LS_CARDIMG = "cw_card_images";   // local-preview fallback stores
 const LS_CARDMETA = "cw_card_meta";
 const LS_CUSTOMCARDS = "cw_custom_cards";
+const LS_CARDSTATUS = "cw_card_status";
 
 // Pull a Google Drive file (or folder) ID out of a share link, embed URL, or a
 // bare ID pasted on its own. Returns null if nothing that looks like an ID is
@@ -123,6 +131,8 @@ function rebuildCommanders() {
     const ov = cardImageOverrides[enc];
     if (ov && typeof ov.img === "string") c.img = ov.img;
     if (ov && typeof ov.backImg === "string") c.backImg = ov.backImg;
+    const st = cardStatusOverrides[enc];
+    c.status = (st && typeof st.state === "string") ? st.state : null;   // null = active
   }
   // Swap into the live array in place (keep the const binding everyone imports).
   COMMANDERS.length = 0;
@@ -135,6 +145,7 @@ function rebuildCommanders() {
 function applyCardImages(snap)  { cardImageOverrides = snap || {}; onCardDataChanged(); }
 function applyCardMeta(snap)    { cardMetaOverrides = snap || {}; onCardDataChanged(); }
 function applyCustomCards(snap) { customCards = snap || {}; onCardDataChanged(); }
+function applyCardStatus(snap)  { cardStatusOverrides = snap || {}; onCardDataChanged(); }
 
 function onCardDataChanged() {
   rebuildCommanders();
@@ -231,6 +242,11 @@ function initFirebase() {
       applyCustomCards(snap.val());
     }, (err) => {
       console.warn("Custom cards unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "cardStatus"), (snap) => {
+      applyCardStatus(snap.val());
+    }, (err) => {
+      console.warn("Card status unavailable (publish database.rules.json?):", err.message);
     });
     return true;
   } catch (e) {
@@ -885,32 +901,69 @@ async function reRoll(key) {
 // history (so they can't re-roll it), then clear assignments to refill the pool.
 async function storeEventAndReset() {
   const entries = Object.entries(assignments);
-  if (entries.length === 0) return alert("No results to store yet.");
-  if (!confirm(`Store ${entries.length} result(s) and reset the pool?\n\nAll commanders return to the pool, but each player keeps their stored result and can't roll that exact result again.`)) return;
+  // Staged roster changes ride along on store-event, so a roster-only rotation
+  // still applies even when there are no results to archive.
+  const staged = Object.entries(cardStatusOverrides)
+    .filter(([, s]) => s && (s.state === "pending" || s.state === "pendingRemoval"));
+  if (entries.length === 0 && staged.length === 0) {
+    return alert("Nothing to store — no results and no staged roster changes.");
+  }
+
+  const pendCount = staged.filter(([, s]) => s.state === "pending").length;
+  const remCount = staged.filter(([, s]) => s.state === "pendingRemoval").length;
+  const parts = [];
+  if (entries.length) parts.push(`store ${entries.length} result(s) and reset the pool`);
+  if (pendCount) parts.push(`publish ${pendCount} future upload(s)`);
+  if (remCount) parts.push(`remove ${remCount} commander(s)`);
+  const detail = entries.length
+    ? "\n\nAll commanders return to the pool, but each player keeps their stored result and can't roll that exact result again."
+    : "";
+  if (!confirm(`This will ${parts.join(", ")}.${detail}`)) return;
+
+  const ts = Date.now(), by = byName();
 
   if (!firebaseReady) {
-    for (const [, a] of entries) foldIntoHistory(historyMirror, a);
-    assignments = {};
+    if (entries.length) {
+      for (const [, a] of entries) foldIntoHistory(historyMirror, a);
+      assignments = {};
+    }
+    const s = readLocalCardStatus();
+    for (const [enc, st] of staged) {
+      if (st.state === "pending") delete s[enc];
+      else if (st.state === "pendingRemoval") s[enc] = { state: "hidden", ts, by };
+    }
+    writeLocalCardStatus(s); cardStatusOverrides = s;
+    rebuildCommanders();
     recomputeUsed(); renderResults(); renderStats(); endSequence();
-    if (isAdmin) populateManualOptions();
+    if (isAdmin) { populateManualOptions(); if (!adminCollapsed) renderCardArtGrid(); }
     return;
   }
 
-  const snapId = push(ref(db, `events/${EVENT_ID}/archives`)).key;
+  // One atomic root update: archive + history fold + pool reset + roster
+  // transitions all commit together, so staged changes go live exactly when the
+  // pool resets. Paths are fully-qualified from the root because cardStatus is a
+  // top-level node, not under events/<id>.
   const updates = {};
-  updates[`archives/${snapId}`] = { ts: Date.now(), assignments: Object.fromEntries(entries) };
-  for (const [, a] of entries) {
-    const k = userKey(a.discord || "");
-    if (!k) continue;
-    if (a.type === "single") {
-      updates[`history/${k}/singles/${encKey(a.name)}`] = a.name;
-    } else if (a.type === "partner") {
-      const ck = comboKey(a.partnerA, a.partnerB);
-      updates[`history/${k}/combos/${encKey(ck)}`] = ck;
+  if (entries.length) {
+    const snapId = push(ref(db, `events/${EVENT_ID}/archives`)).key;
+    updates[`events/${EVENT_ID}/archives/${snapId}`] = { ts, assignments: Object.fromEntries(entries) };
+    for (const [, a] of entries) {
+      const k = userKey(a.discord || "");
+      if (!k) continue;
+      if (a.type === "single") {
+        updates[`events/${EVENT_ID}/history/${k}/singles/${encKey(a.name)}`] = a.name;
+      } else if (a.type === "partner") {
+        const ck = comboKey(a.partnerA, a.partnerB);
+        updates[`events/${EVENT_ID}/history/${k}/combos/${encKey(ck)}`] = ck;
+      }
     }
+    updates[`events/${EVENT_ID}/assignments`] = null;
   }
-  updates["assignments"] = null;
-  await update(ref(db, `events/${EVENT_ID}`), updates);
+  for (const [enc, st] of staged) {
+    if (st.state === "pending") updates[`cardStatus/${enc}`] = null;             // future upload → active
+    else if (st.state === "pendingRemoval") updates[`cardStatus/${enc}`] = { state: "hidden", ts, by }; // future removal → retired
+  }
+  await update(ref(db), updates);
   endSequence();
 }
 
@@ -1011,6 +1064,8 @@ function readLocalCardMeta() { try { return JSON.parse(localStorage.getItem(LS_C
 function writeLocalCardMeta(o) { try { localStorage.setItem(LS_CARDMETA, JSON.stringify(o)); } catch { /* ignore */ } }
 function readLocalCustomCards() { try { return JSON.parse(localStorage.getItem(LS_CUSTOMCARDS) || "{}") || {}; } catch { return {}; } }
 function writeLocalCustomCards(o) { try { localStorage.setItem(LS_CUSTOMCARDS, JSON.stringify(o)); } catch { /* ignore */ } }
+function readLocalCardStatus() { try { return JSON.parse(localStorage.getItem(LS_CARDSTATUS) || "{}") || {}; } catch { return {}; } }
+function writeLocalCardStatus(o) { try { localStorage.setItem(LS_CARDSTATUS, JSON.stringify(o)); } catch { /* ignore */ } }
 
 // Write one face override for a commander (Firebase, or localStorage offline).
 async function writeCardOverride(name, face, id) {
@@ -1077,10 +1132,60 @@ async function setPartnerFlag(name, on) {
   } catch (e) { setCaMsg("Partner update failed: " + e.message + " (publish database.rules.json?)", "err"); }
 }
 
+// ── Staged roster status (future upload / future removal) ──
+// A card's lifecycle state lives in cardStatus/<enc>:
+//   "pending"        → future upload: off the wheel + hidden from players
+//                      (admin-only), goes live for everyone on the next Store-event.
+//   "pendingRemoval" → future removal: still live/rollable now, becomes "hidden"
+//                      on the next Store-event.
+//   "hidden"         → retired: off the wheel + hidden from players; kept in the
+//                      DB so it can be revolved back in via restoreCard().
+// Absent = active. The transitions themselves fire in storeEventAndReset();
+// these writers just stage the intent (applied over shipped AND custom cards).
+async function writeCardStatus(name, state) {
+  const enc = encKey(name);
+  const ts = Date.now(), by = byName();
+  if (db) {
+    await update(ref(db, "cardStatus/" + enc), { state, ts, by });
+  } else {
+    const s = readLocalCardStatus(); s[enc] = { state, ts, by }; writeLocalCardStatus(s); applyCardStatus(s);
+  }
+}
+async function eraseCardStatus(name) {
+  const enc = encKey(name);
+  if (db) {
+    await remove(ref(db, "cardStatus/" + enc));
+  } else {
+    const s = readLocalCardStatus(); delete s[enc]; writeLocalCardStatus(s); applyCardStatus(s);
+  }
+}
+
+// Schedule an existing card (shipped or custom) for removal on the next Store-event.
+async function scheduleRemoval(name) {
+  try { await writeCardStatus(name, "pendingRemoval"); setCaMsg(`“${name}” is scheduled to be removed on the next “Store event & reset pool”.`, "ok"); }
+  catch (e) { setCaMsg("Schedule failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+// Undo a scheduled removal, or publish a pending future-upload card immediately.
+async function clearStatus(name) {
+  try { await eraseCardStatus(name); setCaMsg(`“${name}” is active.`, "ok"); }
+  catch (e) { setCaMsg("Update failed: " + e.message, "err"); }
+}
+// Revolve a retired card back in — returns as a staged future upload.
+async function restoreCard(name) {
+  try { await writeCardStatus(name, "pending"); setCaMsg(`“${name}” will be restored — it goes live on the next “Store event & reset pool”.`, "ok"); }
+  catch (e) { setCaMsg("Restore failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+// Cancel a pending restore — send the card straight back to retired (it isn't
+// live yet, so nothing changes for players).
+async function retireCard(name) {
+  try { await writeCardStatus(name, "hidden"); setCaMsg(`“${name}” stays retired.`, "ok"); }
+  catch (e) { setCaMsg("Update failed: " + e.message, "err"); }
+}
+
 // Add a brand-new commander to the pool (request A). Identity + art go to
 // customCards; partner status (if any) goes to cardMeta so this and the grid
 // toggle share one source of truth. Rejects names that already exist.
-async function addCustomCard({ name, back, img, backImg, partner }) {
+async function addCustomCard({ name, back, img, backImg, partner, pending }) {
   name = String(name || "").trim();
   back = String(back || "").trim();
   if (!name) { setCaMsg("Give the card a name.", "err"); return false; }
@@ -1101,13 +1206,15 @@ async function addCustomCard({ name, back, img, backImg, partner }) {
     if (db) {
       const updates = { ["customCards/" + enc]: rec };
       if (partner) updates["cardMeta/" + enc] = { partner: true, ts, by };
+      if (pending) updates["cardStatus/" + enc] = { state: "pending", ts, by };
       await update(ref(db), updates);
     } else {
-      const cc = readLocalCustomCards(); cc[enc] = rec; writeLocalCustomCards(cc);
-      if (partner) { const m = readLocalCardMeta(); m[enc] = { partner: true, ts, by }; writeLocalCardMeta(m); customCards = cc; applyCardMeta(m); }
-      else applyCustomCards(cc);
+      const cc = readLocalCustomCards(); cc[enc] = rec; writeLocalCustomCards(cc); customCards = cc;
+      if (partner) { const m = readLocalCardMeta(); m[enc] = { partner: true, ts, by }; writeLocalCardMeta(m); cardMetaOverrides = m; }
+      if (pending) { const s = readLocalCardStatus(); s[enc] = { state: "pending", ts, by }; writeLocalCardStatus(s); cardStatusOverrides = s; }
+      applyCustomCards(cc);
     }
-    setCaMsg(`Added “${name}”.`, "ok");
+    setCaMsg(pending ? `Staged “${name}” as a future upload — it goes live for everyone on the next “Store event & reset pool”.` : `Added “${name}”.`, "ok");
     return true;
   } catch (e) { setCaMsg("Add failed: " + e.message + " (publish database.rules.json?)", "err"); return false; }
 }
@@ -1122,12 +1229,14 @@ async function deleteCustomCard(name) {
         remove(ref(db, "customCards/" + enc)),
         remove(ref(db, "cardMeta/" + enc)),
         remove(ref(db, "cardImages/" + enc)),
+        remove(ref(db, "cardStatus/" + enc)),
       ]);
     } else {
       const cc = readLocalCustomCards(); delete cc[enc]; writeLocalCustomCards(cc);
       const m = readLocalCardMeta(); delete m[enc]; writeLocalCardMeta(m);
       const im = readLocalCardImages(); delete im[enc]; writeLocalCardImages(im);
-      cardMetaOverrides = m; cardImageOverrides = im; applyCustomCards(cc);
+      const s = readLocalCardStatus(); delete s[enc]; writeLocalCardStatus(s);
+      cardMetaOverrides = m; cardImageOverrides = im; cardStatusOverrides = s; applyCustomCards(cc);
     }
     setCaMsg(`Removed “${name}”.`, "ok");
   } catch (e) { setCaMsg("Remove failed: " + e.message, "err"); }
@@ -1154,6 +1263,31 @@ function faceTile(c, face) {
   `</div>`;
 }
 
+// Staged-roster badge shown next to a card's name in the admin grid.
+function statusTag(c) {
+  if (c.status === "pending") return ` <span class="ca-status-tag pending">⏳ future upload</span>`;
+  if (c.status === "pendingRemoval") return ` <span class="ca-status-tag removal">⏳ removal scheduled</span>`;
+  if (c.status === "hidden") return ` <span class="ca-status-tag retired">🚫 retired</span>`;
+  return "";
+}
+// Per-card staging controls. Actions are delegated in wireCardArt() via
+// data-action + data-name. Hard-delete (customCards) is offered only for
+// admin-added cards; shipped cards can be retired (hidden) but never deleted.
+function statusControls(c) {
+  const nm = escapeHtml(c.name);
+  const btn = (action, label, cls) =>
+    `<button class="ca-status-btn${cls ? " " + cls : ""}" type="button" data-action="${action}" data-name="${nm}">${label}</button>`;
+  if (c.status === "pending") {
+    // Future upload (or a restored card) awaiting the next Store-event.
+    return btn("clear", "Publish now", "ok") +
+      (c.custom ? btn("discard", "Discard", "danger") : btn("retire", "Cancel"));
+  }
+  if (c.status === "pendingRemoval") return btn("clear", "Undo removal");
+  if (c.status === "hidden") return btn("restore", "Restore") + (c.custom ? btn("discard", "Delete", "danger") : "");
+  // active
+  return btn("schedule", "⏳ Schedule removal") + (c.custom ? btn("discard", "✕ Remove", "danger") : "");
+}
+
 // Render the searchable card grid (only meaningful while the panel is visible).
 function renderCardArtGrid() {
   const grid = $("caGrid");
@@ -1167,16 +1301,14 @@ function renderCardArtGrid() {
   grid.innerHTML = shown.map((c) => {
     const hasBack = !!(ORIGINAL_ART.get(c.name).backImg || c.back);
     const nm = escapeHtml(c.name);
-    const del = c.custom
-      ? `<button class="ca-del" type="button" data-name="${nm}" title="Remove this custom card">✕ remove</button>`
-      : "";
-    return `<li class="ca-item${c.custom ? " custom" : ""}">` +
+    const stCls = c.status ? ` st-${c.status}` : "";
+    return `<li class="ca-item${c.custom ? " custom" : ""}${stCls}">` +
       `<div class="ca-faces">${faceTile(c, "img")}${hasBack ? faceTile(c, "backImg") : ""}</div>` +
       `<div class="ca-name">${nm}${c.back ? `<span class="ca-flip">// ${escapeHtml(c.back)}</span>` : ""}` +
-        `${c.custom ? ` <span class="ca-custom-tag">added</span>` : ""}</div>` +
+        `${c.custom ? ` <span class="ca-custom-tag">added</span>` : ""}${statusTag(c)}</div>` +
       `<div class="ca-meta">` +
         `<label class="ca-partner"><input type="checkbox" class="ca-partner-check" data-name="${nm}"${c.partner ? " checked" : ""}> 🤝 partner</label>` +
-        del +
+        `<span class="ca-status-actions">${statusControls(c)}</span>` +
       `</div>` +
     `</li>`;
   }).join("");
@@ -1378,12 +1510,14 @@ async function onAddSingleCard() {
     back: twoFaces ? $("caNewBackName").value : "",
     backImg: twoFaces ? $("caNewBackImg").value : "",
     partner: $("caNewPartner") && $("caNewPartner").checked,
+    pending: $("caNewFuture") && $("caNewFuture").checked,
   });
   if (ok) {
     // Clear the form for the next card; keep the panel open on the new grid entry.
     ["caNewName", "caNewImg", "caNewBackName", "caNewBackImg"].forEach((id) => { if ($(id)) $(id).value = ""; });
     if ($("caNew2Faces")) $("caNew2Faces").checked = false;
     if ($("caNewPartner")) $("caNewPartner").checked = false;
+    if ($("caNewFuture")) $("caNewFuture").checked = false;
     syncNewCardFaces();
     if ($("caSearch")) { $("caSearch").value = ""; renderCardArtGrid(); }
   }
@@ -1418,10 +1552,16 @@ function wireCardArt() {
   const grid = $("caGrid");
   if (grid) {
     grid.addEventListener("click", (e) => {
-      const del = e.target.closest(".ca-del");
-      if (del) {
-        const name = del.dataset.name;
-        if (confirm(`Remove the custom card “${name}”? This deletes its art and partner overrides too.`)) deleteCustomCard(name);
+      const stBtn = e.target.closest(".ca-status-btn");
+      if (stBtn) {
+        const { action, name } = stBtn.dataset;
+        if (action === "schedule") scheduleRemoval(name);
+        else if (action === "clear") clearStatus(name);
+        else if (action === "restore") restoreCard(name);
+        else if (action === "retire") retireCard(name);
+        else if (action === "discard") {
+          if (confirm(`Remove the custom card “${name}”? This deletes its art, partner, and status overrides too.`)) deleteCustomCard(name);
+        }
         return;
       }
       const face = e.target.closest(".ca-face");
@@ -1557,9 +1697,11 @@ function boot() {
   // localStorage so the admin tools are still testable.
   if (!configured) {
     try { adminOwnerKey = localStorage.getItem(LS_ADMIN) || null; } catch { /* ignore */ }
-    // Seed the mirrors, then a single rebuild so custom cards + partner flips show.
+    // Seed the mirrors, then a single rebuild so custom cards + partner flips
+    // + staged roster status all show.
     cardImageOverrides = readLocalCardImages();
     cardMetaOverrides = readLocalCardMeta();
+    cardStatusOverrides = readLocalCardStatus();
     applyCustomCards(readLocalCustomCards());
   }
   window.addEventListener("hashchange", refreshAdminUI);
