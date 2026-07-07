@@ -370,7 +370,10 @@ function initCollapsible() {
   document.querySelectorAll(".gallery-sec-head").forEach((head) => {
     const sec = head.closest(".gallery-sec");
     const key = head.dataset.sec;
-    if (sec && saved[key]) { sec.classList.add("collapsed"); head.setAttribute("aria-expanded", "false"); }
+    // "Future updates" defaults to collapsed (it sits above Live now); other
+    // sections default open. An explicit saved preference always wins.
+    const collapsed = (key in saved) ? saved[key] : (key === "future");
+    if (sec && collapsed) { sec.classList.add("collapsed"); head.setAttribute("aria-expanded", "false"); }
     head.addEventListener("click", () => {
       const collapsed = sec.classList.toggle("collapsed");
       head.setAttribute("aria-expanded", collapsed ? "false" : "true");

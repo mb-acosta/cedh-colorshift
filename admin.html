@@ -49,29 +49,6 @@
       <button id="resetBtn" class="danger">Reset all assignments</button>
     </div>
 
-    <div id="densityPanel" class="admin-panel cc-density-panel" style="display:none">
-      <h3>Color-identity density</h3>
-      <p class="admin-hint">How many live commanders include each color — a UBR commander counts toward blue, black, and red. Tag identities on each card below (the <b>+</b> next to a card), then use this to balance the pool.</p>
-      <div id="ccDensity" class="cc-density"></div>
-    </div>
-
-    <div id="rulesPanel" class="admin-panel" style="display:none">
-      <h3>League rules</h3>
-      <p class="admin-hint">Shown to everyone via the 📜 Rules button in the header. Edit here and Save to update it for all players.</p>
-      <textarea id="rulesEdit" class="rules-edit" rows="8" placeholder="Type the league rules here…"></textarea>
-      <div class="rules-edit-row">
-        <button id="rulesSaveBtn" type="button">Save rules</button>
-        <span id="rulesMsg" class="auth-msg"></span>
-      </div>
-    </div>
-
-    <div id="accountsPanel" class="admin-panel" style="display:none">
-      <h3>Accounts <span class="badge" id="accountsCount">0</span></h3>
-      <p class="admin-hint">Every registered account. Deleting one removes their login <b>and</b> their points, crown, and event history/results — this can't be undone.</p>
-      <ul id="accountsList" class="accounts-list"></ul>
-      <div id="accountsMsg" class="auth-msg"></div>
-    </div>
-
     <div id="adminPanel" class="admin-panel" style="display:none">
       <h3>Manually assign a commander</h3>
       <div class="manual-form">
@@ -89,7 +66,21 @@
       <p class="admin-hint">“Store event &amp; reset” keeps every result, then refills the pool — players just can’t re-roll the exact result they already got. Use the <b>↻</b> button on a result to let someone spin again.</p>
     </div>
 
-    <div id="cardArtPanel" class="admin-panel card-art-panel" style="display:none">
+    <nav id="adminTabs" class="admin-tabs" style="display:none">
+      <button type="button" class="admin-tab" data-tab="cards">🃏 Card database</button>
+      <button type="button" class="admin-tab" data-tab="accounts">👤 Accounts</button>
+      <button type="button" class="admin-tab" data-tab="rules">📜 Rules</button>
+    </nav>
+
+    <div id="adminTabPanels" style="display:none">
+    <section class="admin-tabpanel" data-tabpanel="cards">
+    <div id="densityPanel" class="admin-panel cc-density-panel">
+      <h3>Color-identity density</h3>
+      <p class="admin-hint">How many live commanders include each color — a UBR commander counts toward blue, black, and red. Tag identities on each card below (the <b>+</b> next to a card), then use this to balance the pool.</p>
+      <div id="ccDensity" class="cc-density"></div>
+    </div>
+
+    <div id="cardArtPanel" class="admin-panel card-art-panel">
       <h3>Card art &amp; colors</h3>
       <p class="admin-hint">Re-point a card at a different Google Drive image without a redeploy — drop a Drive link on a face or paste its link/ID. <b>Set now</b> goes live for everyone immediately; <b>⏳ Stage</b> holds the new art (admin-only preview) until the next “Store event &amp; reset pool”, then publishes it. Use the <b>+</b> in each card to tag its color identity. Cards must be shared “Anyone with the link”.</p>
 
@@ -158,6 +149,29 @@
       </div>
       <ul id="caGrid" class="ca-grid"></ul>
       <div id="caMsg" class="auth-msg"></div>
+    </div>
+    </section>
+
+    <section class="admin-tabpanel" data-tabpanel="accounts" hidden>
+    <div id="accountsPanel" class="admin-panel">
+      <h3>Accounts <span class="badge" id="accountsCount">0</span></h3>
+      <p class="admin-hint">Every registered account. Deleting one removes their login <b>and</b> their points, crown, and event history/results — this can't be undone.</p>
+      <ul id="accountsList" class="accounts-list"></ul>
+      <div id="accountsMsg" class="auth-msg"></div>
+    </div>
+    </section>
+
+    <section class="admin-tabpanel" data-tabpanel="rules" hidden>
+    <div id="rulesPanel" class="admin-panel">
+      <h3>League rules</h3>
+      <p class="admin-hint">Shown to everyone via the 📜 Rules button in the header. Edit here and Save to update it for all players.</p>
+      <textarea id="rulesEdit" class="rules-edit" rows="8" placeholder="Type the league rules here…"></textarea>
+      <div class="rules-edit-row">
+        <button id="rulesSaveBtn" type="button">Save rules</button>
+        <span id="rulesMsg" class="auth-msg"></span>
+      </div>
+    </div>
+    </section>
     </div>
   </main>
 

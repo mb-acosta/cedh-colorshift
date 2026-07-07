@@ -2092,7 +2092,27 @@ function wireAdmin() {
     const del = e.target.closest(".acct-del");
     if (del) deleteAccount(del.dataset.key, del.dataset.name);
   });
+  initAdminTabs();
   wireCardArt();
+}
+
+// The admin page groups its panels into tabs (Card database / Accounts / Rules).
+// The Store-event bar + manual-assign stay persistent above them. Remembers the
+// last-opened tab per-browser.
+function initAdminTabs() {
+  const tabs = $("adminTabs");
+  const panels = $("adminTabPanels");
+  if (!tabs || !panels) return;
+  const KEY = "cw_admin_tab";
+  const show = (name) => {
+    tabs.querySelectorAll(".admin-tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    panels.querySelectorAll(".admin-tabpanel").forEach((p) => { p.hidden = p.dataset.tabpanel !== name; });
+    try { localStorage.setItem(KEY, name); } catch { /* ignore */ }
+  };
+  tabs.addEventListener("click", (e) => { const b = e.target.closest(".admin-tab"); if (b) show(b.dataset.tab); });
+  let initial = "cards";
+  try { const saved = localStorage.getItem(KEY); if (saved && panels.querySelector(`.admin-tabpanel[data-tabpanel="${saved}"]`)) initial = saved; } catch { /* ignore */ }
+  show(initial);
 }
 
 // Card-art panel listeners (delegated so they survive grid/review re-renders).
@@ -2284,11 +2304,9 @@ function refreshAdminUI() {
   // no collapse chip. (These setDisp calls no-op on the wheel page.)
   const showTools = isAdmin;
   setDisp("adminBar", showTools ? "flex" : "none");
-  setDisp("adminPanel", showTools ? "block" : "none");
-  setDisp("cardArtPanel", showTools ? "block" : "none");
-  setDisp("densityPanel", showTools ? "block" : "none");
-  setDisp("rulesPanel", showTools ? "block" : "none");
-  setDisp("accountsPanel", showTools ? "block" : "none");
+  setDisp("adminPanel", showTools ? "block" : "none");   // manual assign — persistent above the tabs
+  setDisp("adminTabs", showTools ? "flex" : "none");     // the tab bar + its panels (Card database / Accounts / Rules)
+  setDisp("adminTabPanels", showTools ? "block" : "none");
 
   // Claiming now lives on admin.html (its presence gates the claim UI); the
   // create-only rule still prevents a leaked link from seizing ownership.
