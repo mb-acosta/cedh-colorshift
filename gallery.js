@@ -34,11 +34,24 @@ function face(id, alt) {
   return `<img class="g-card" src="${driveImg(id)}" alt="${escapeHtml(alt)}" ` +
     `loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('broken')">`;
 }
-// A real MTG mana symbol (mana-font). "" or "C" → colorless.
+// A real MTG mana symbol (mana-font). "" or "C" → colorless. data-letter is the
+// fallback shown (via CSS) as a colored W/U/B/R/G/C circle if the font fails.
 function manaSym(L) {
   const c = String(L || "C").toUpperCase();
-  return `<i class="ms ms-${c.toLowerCase()} ms-cost" title="${COLOR_NAME[c] || c}" aria-hidden="true"></i>`;
+  return `<i class="ms ms-${c.toLowerCase()} ms-cost" data-letter="${c}" title="${COLOR_NAME[c] || c}" aria-hidden="true"></i>`;
 }
+// Flag <html> if the Mana web font can't load, so CSS falls back to letter pips.
+function detectManaFont() {
+  const flag = () => {
+    if (!document.fonts || !document.fonts.load) { document.documentElement.classList.add("no-mana"); return; }
+    document.fonts.load('16px "Mana"')
+      .then((faces) => { if (!faces || faces.length === 0) document.documentElement.classList.add("no-mana"); })
+      .catch(() => document.documentElement.classList.add("no-mana"));
+  };
+  if (document.readyState === "complete") flag();
+  else window.addEventListener("load", flag, { once: true });
+}
+detectManaFont();
 // Color-identity pips (read-only), as authentic mana symbols. null/undefined
 // (untagged) renders nothing; "" renders the colorless symbol.
 function colorPipsHtml(colors) {

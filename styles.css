@@ -414,6 +414,22 @@ button.cc-pip:hover { outline: 2px solid var(--err); outline-offset: 1px; }
 .cc-pick:hover { outline: 2px solid var(--gold); outline-offset: 1px; }
 .filter-chip .ms-cost { font-size: 15px; }
 
+/* Fallback if the Mana web font fails to load: draw the letter (W/U/B/R/G/C) in a
+   colored circle instead of the mana glyph. detectManaFont() adds .no-mana to <html>. */
+.no-mana .ms.ms-cost {
+  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+  width: 1.35em; height: 1.35em; border-radius: 999px;
+  font-family: system-ui, -apple-system, sans-serif; font-style: normal; font-weight: 800;
+  border: 1px solid rgba(0,0,0,.28); background: #b9c2cc; color: #1a2733;
+}
+.no-mana .ms.ms-cost::before { content: attr(data-letter); font-size: .78em; line-height: 1; }
+.no-mana .ms-w.ms-cost { background: #f4efd3; color: #3a3520; }
+.no-mana .ms-u.ms-cost { background: #2f9fe0; color: #04283f; }
+.no-mana .ms-b.ms-cost { background: #4a4650; color: #e8e3df; }
+.no-mana .ms-r.ms-cost { background: #e0574b; color: #3a0d08; }
+.no-mana .ms-g.ms-cost { background: #49af74; color: #08301a; }
+.no-mana .ms-c.ms-cost { background: #b9c2cc; color: #1a2733; }
+
 /* Admin per-card color editor (in .ca-meta) */
 .cc-editor { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cc-untagged { color: var(--muted); font-size: .72rem; font-style: italic; }

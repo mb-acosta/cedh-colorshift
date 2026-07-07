@@ -1289,10 +1289,23 @@ async function setPartnerFlag(name, on) {
 const WUBRG = ["W", "U", "B", "R", "G"];
 const COLOR_NAME = { W: "White", U: "Blue", B: "Black", R: "Red", G: "Green", C: "Colorless" };
 // A real MTG mana symbol (mana-font). "" or "C" → colorless. ms-cost draws the
-// colored circular badge; the glyph is the authentic pip icon.
+// colored circular badge; the glyph is the authentic pip icon. data-letter is the
+// fallback shown (via CSS) as a colored W/U/B/R/G/C circle if the font fails to load.
 function manaSym(L) {
   const c = (String(L || "C").toUpperCase());
-  return `<i class="ms ms-${c.toLowerCase()} ms-cost" title="${COLOR_NAME[c] || c}" aria-hidden="true"></i>`;
+  return `<i class="ms ms-${c.toLowerCase()} ms-cost" data-letter="${c}" title="${COLOR_NAME[c] || c}" aria-hidden="true"></i>`;
+}
+// If the Mana web font can't load, flag <html> so CSS falls back to letter pips.
+// Runs at window.load so the @font-face is registered (or known-failed) by then.
+function detectManaFont() {
+  const flag = () => {
+    if (!document.fonts || !document.fonts.load) { document.documentElement.classList.add("no-mana"); return; }
+    document.fonts.load('16px "Mana"')
+      .then((faces) => { if (!faces || faces.length === 0) document.documentElement.classList.add("no-mana"); })
+      .catch(() => document.documentElement.classList.add("no-mana"));
+  };
+  if (document.readyState === "complete") flag();
+  else window.addEventListener("load", flag, { once: true });
 }
 // Which card's color picker is open (kept across grid re-renders so you can
 // multi-select in one go; cleared when you click away — see wireCardArt).
@@ -1971,6 +1984,7 @@ async function claimAdmin() {
 // and the rebuild/render chain run on both; only the page-specific wiring differs.
 function boot() {
   const page = (document.body && document.body.dataset.page) || "wheel";
+  detectManaFont();
   restoreSession();
 
   // Wheel page only: the spinner, guest roll, and results list.
