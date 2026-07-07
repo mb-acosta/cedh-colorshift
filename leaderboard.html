@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leaderboard</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏆</text></svg>" />
+</head>
+<body>
+  <header>
+    <h1>🏆 Leaderboard</h1>
+    <div class="header-right">
+      <a class="nav-link" id="adminNav" href="admin.html" style="display:none">🔧 Admin</a>
+      <a class="nav-link" href="index.html">← Wheel</a>
+      <a class="nav-link" href="gallery.html">📖 Card reference</a>
+      <button class="nav-link" id="rulesBtn" type="button">📜 Rules</button>
+    </div>
+  </header>
+
+  <main class="lb-main">
+    <p class="lb-note">Points are awarded per win. On the next “Store event &amp; reset pool”, the top scorer(s) earn 👑 until the following event — and points reset to zero.</p>
+    <ul id="lbList" class="lb-list"></ul>
+  </main>
+
+  <div id="rulesModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-label="League rules">
+      <button id="rulesClose" class="modal-close" type="button" aria-label="Close">✕</button>
+      <h2>📜 League rules</h2>
+      <div id="rulesBody" class="rules-body">Loading…</div>
+    </div>
+  </div>
+
+  <script type="module" src="leaderboard.js"></script>
+</body>
+</html>

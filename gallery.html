@@ -11,7 +11,12 @@
 <body>
   <header>
     <h1>📖 Commander Reference</h1>
-    <a class="nav-link" href="index.html">← Back to the wheel</a>
+    <div class="header-right">
+      <a class="nav-link" id="adminNav" href="admin.html" style="display:none">🔧 Admin</a>
+      <a class="nav-link" href="leaderboard.html">🏆 Leaderboard</a>
+      <a class="nav-link" href="index.html">← Wheel</a>
+      <button class="nav-link" id="rulesBtn" type="button">📜 Rules</button>
+    </div>
   </header>
 
   <main class="gallery-main">
@@ -89,6 +94,15 @@
   <footer>
     <p>Every commander in the pool, in alphabetical order. Flip cards show both faces. This is a reference only — head back to the wheel to spin.</p>
   </footer>
+
+  <div id="rulesModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-label="League rules">
+      <button id="rulesClose" class="modal-close" type="button" aria-label="Close">✕</button>
+      <h2>📜 League rules</h2>
+      <div id="rulesBody" class="rules-body">Loading…</div>
+    </div>
+  </div>
 
   <script type="module" src="gallery.js"></script>
 </body>

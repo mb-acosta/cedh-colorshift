@@ -1,5 +1,8 @@
 import { COMMANDERS } from "./commanders.js";
 import { firebaseConfig, EVENT_ID } from "./firebase-config.js";
+import { initRulesModal } from "./rules-modal.js";
+
+const rulesModal = initRulesModal();   // 📜 Rules button + popup (shared)
 
 // Static reference gallery. Renders every commander in alphabetical order with a
 // search filter, in either a card GRID (default) or a compact LIST. It reads the
@@ -407,7 +410,7 @@ if (search) search.addEventListener("input", (e) => render(e.target.value));
     try { const res = await fetch(base + path); return res.ok ? (await res.json()) : null; }
     catch { return null; }
   };
-  const [imgs, staged, meta, custom, status, colors, changes, assigns, owner] = await Promise.all([
+  const [imgs, staged, meta, custom, status, colors, changes, assigns, owner, rules] = await Promise.all([
     fetchJson("/cardImages.json"),
     fetchJson("/cardImagesStaged.json"),
     fetchJson("/cardMeta.json"),
@@ -417,6 +420,7 @@ if (search) search.addEventListener("input", (e) => render(e.target.value));
     fetchJson("/poolChanges.json"),
     fetchJson(`/events/${EVENT_ID}/assignments.json`),
     fetchJson("/admin/owner.json"),
+    fetchJson("/leagueRules.json"),
   ]);
   cardImages = imgs || {};
   cardImagesStaged = staged || {};
@@ -428,6 +432,9 @@ if (search) search.addEventListener("input", (e) => render(e.target.value));
   assignments = assigns || {};
   session = getSession();
   isAdmin = detectAdmin(owner);
+  rulesModal.setText(rules && rules.text);
+  const adminNav = document.getElementById("adminNav");
+  if (adminNav) adminNav.style.display = isAdmin ? "inline-flex" : "none";
   rebuild();
   render(search ? search.value : "");
   maybeShowColorUI();

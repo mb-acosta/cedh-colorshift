@@ -4,6 +4,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import {
   getDatabase, ref, onValue, push, runTransaction, remove, update, get,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { initRulesModal } from "./rules-modal.js";
 
 // ───────────────────────────── Config ─────────────────────────────
 // How likely is the wheel to land on "PARTNER" vs a single commander?
@@ -201,6 +202,10 @@ let usedSingles = new Set();     // single commander names already taken (pool-w
 let usedCombos = new Set();      // partner combo keys already taken (pool-wide)
 let usedDiscords = new Set();    // discord names (lowercase) already assigned this event
 let firebaseReady = false;
+let pointsMirror = {};           // userKey -> number  — current event's leaderboard points
+let championsMirror = {};        // userKey -> true    — reigning crown holders (set at store-event)
+let leagueRulesText = "";        // the shared rules text (shown in the 📜 modal)
+let rulesModal = null;           // handle from initRulesModal()
 
 // ── Auth / scope state (see blocked()) ──
 let currentUser = null;          // { username, key } when logged in
@@ -296,6 +301,25 @@ function initFirebase() {
       applyPoolChanges(snap.val());
     }, (err) => {
       console.warn("Pool changes unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "leagueRules"), (snap) => {
+      const v = snap.val();
+      leagueRulesText = (v && typeof v.text === "string") ? v.text : "";
+      if (rulesModal) rulesModal.setText(leagueRulesText);
+      if (isAdmin) syncRulesEditor();
+    }, (err) => {
+      console.warn("League rules unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "points"), (snap) => {
+      pointsMirror = snap.val() || {};
+    }, (err) => {
+      console.warn("Points unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "champions"), (snap) => {
+      championsMirror = snap.val() || {};
+      renderResults();   // crowns next to names in the assignments list
+    }, (err) => {
+      console.warn("Champions unavailable (publish database.rules.json?):", err.message);
     });
     return true;
   } catch (e) {
@@ -726,7 +750,7 @@ function renderResults() {
       `<button class="remove-btn" data-key="${key}" title="Remove assignment">✕</button>`
     : "";
   $("results").innerHTML = list.map(([key, a]) => {
-    const whoHtml = `<span class="who">${escapeHtml(a.discord || "?")}${isAdmin ? acctBadge(a.discord) : ""}</span>`;
+    const whoHtml = `<span class="who">${escapeHtml(a.discord || "?")}${crownFor(a.discord)}${isAdmin ? acctBadge(a.discord) : ""}</span>`;
     if (a.type === "single") {
       const flip = a.back ? `<span class="flip"> // ${escapeHtml(a.back)}</span>` : "";
       return `<li><div class="thumbs">${cardsForName(a.name, "thumb")}</div>` +
@@ -968,7 +992,13 @@ async function storeEventAndReset() {
   // Staged color shifts (the "shift to" identity) go live on the same rotation.
   const stagedShifts = Object.entries(cardColorStaged)
     .filter(([, v]) => v && typeof v.colors === "string");
-  if (entries.length === 0 && staged.length === 0 && stagedArt.length === 0 && stagedShifts.length === 0) {
+  // Leaderboard: the top scorer(s) of this event earn the crown, then points reset.
+  const maxPts = Object.values(pointsMirror).reduce((m, n) => Math.max(m, Number(n) || 0), 0);
+  const newChampions = maxPts > 0
+    ? Object.keys(pointsMirror).filter((k) => (Number(pointsMirror[k]) || 0) === maxPts)
+    : [];
+  const hasPoints = Object.values(pointsMirror).some((n) => (Number(n) || 0) > 0);
+  if (entries.length === 0 && staged.length === 0 && stagedArt.length === 0 && stagedShifts.length === 0 && !hasPoints) {
     return alert("Nothing to store — no results and no staged roster, art, or color changes.");
   }
 
@@ -980,6 +1010,7 @@ async function storeEventAndReset() {
   if (remCount) parts.push(`remove ${remCount} commander(s)`);
   if (stagedArt.length) parts.push(`apply ${stagedArt.length} art change(s)`);
   if (stagedShifts.length) parts.push(`shift ${stagedShifts.length} color identit${stagedShifts.length === 1 ? "y" : "ies"}`);
+  if (hasPoints) parts.push(`crown the leader${newChampions.length === 1 ? "" : "s"} & reset points`);
   const detail = entries.length
     ? "\n\nAll commanders return to the pool, but each player keeps their stored result and can't roll that exact result again."
     : "";
@@ -1021,9 +1052,12 @@ async function storeEventAndReset() {
     for (const [enc] of stagedShifts) pc[enc] = { kind: "updated", ts };
     for (const [enc, st] of staged) if (st.state === "pending") pc[enc] = { kind: "added", ts };
     writeLocalPoolChanges(pc); poolChangeOverrides = pc;
+    // Crown this event's leader(s), then reset points (in-memory; no local store).
+    championsMirror = {}; for (const k of newChampions) championsMirror[k] = true;
+    pointsMirror = {};
     rebuildCommanders();
     recomputeUsed(); renderResults(); renderStats(); endSequence();
-    if (isAdmin) { populateManualOptions(); renderCardArtGrid(); renderDensity(); }
+    if (isAdmin) { populateManualOptions(); renderCardArtGrid(); renderDensity(); renderAccounts(); }
     return;
   }
 
@@ -1034,7 +1068,11 @@ async function storeEventAndReset() {
   const updates = {};
   if (entries.length) {
     const snapId = push(ref(db, `events/${EVENT_ID}/archives`)).key;
-    updates[`events/${EVENT_ID}/archives/${snapId}`] = { ts, assignments: Object.fromEntries(entries) };
+    // Save the event, including the final leaderboard standings + crowned player(s).
+    updates[`events/${EVENT_ID}/archives/${snapId}`] = {
+      ts, assignments: Object.fromEntries(entries),
+      points: { ...pointsMirror }, champions: newChampions,
+    };
     for (const [, a] of entries) {
       const k = userKey(a.discord || "");
       if (!k) continue;
@@ -1069,6 +1107,10 @@ async function storeEventAndReset() {
   for (const [enc] of stagedArt) updates[`poolChanges/${enc}`] = { kind: "updated", ts };
   for (const [enc] of stagedShifts) updates[`poolChanges/${enc}`] = { kind: "updated", ts };
   for (const [enc, st] of staged) if (st.state === "pending") updates[`poolChanges/${enc}`] = { kind: "added", ts };
+  // Crown this event's leader(s) until the next store-event, then reset points.
+  for (const k of Object.keys(championsMirror)) updates[`champions/${k}`] = null;   // clear the old crown
+  for (const k of newChampions) updates[`champions/${k}`] = true;
+  for (const k of Object.keys(pointsMirror)) updates[`points/${k}`] = null;          // fresh scores next event
   await update(ref(db), updates);
   endSequence();
 }
@@ -1143,15 +1185,92 @@ function populateManualOptions() {
   }
 }
 
+let accountsMirror = {};   // userKey -> user record, for the admin accounts panel
 async function refreshUserList() {
   let users = {};
   if (db) { try { const snap = await get(usersRef); users = snap.val() || {}; } catch { /* ignore */ } }
   else { users = localUsers(); }
+  accountsMirror = users;
   registeredKeys = new Set(Object.keys(users));   // node keys are userKeys
   const names = Object.values(users).map((u) => u && u.username).filter(Boolean).sort();
   const ul = $("userList");   // datalist lives only on the admin page…
   if (ul) ul.innerHTML = names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
+  renderAccounts();
   renderResults();   // …but registeredKeys still feeds account badges on the wheel page
+}
+
+// ── League rules editor (admin page) ──
+function syncRulesEditor() {
+  const ta = $("rulesEdit");
+  // Don't clobber an in-progress edit: only refill when the field isn't focused.
+  if (ta && document.activeElement !== ta) ta.value = leagueRulesText;
+}
+async function saveLeagueRules() {
+  const ta = $("rulesEdit");
+  if (!ta) return;
+  const text = ta.value;
+  const ts = Date.now(), by = byName();
+  const msg = (m, k) => { const el = $("rulesMsg"); if (el) { el.textContent = m; el.className = "auth-msg " + (k || ""); } };
+  try {
+    if (db) await update(ref(db, "leagueRules"), { text, ts, by });
+    else { leagueRulesText = text; if (rulesModal) rulesModal.setText(text); }
+    msg("Rules saved.", "ok");
+  } catch (e) { msg("Save failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// ── Accounts panel (admin page) ──
+// Lists every registered account with a delete button. Deleting removes the login
+// AND that player's data (points, crown, event history, and live assignments).
+function renderAccounts() {
+  const list = $("accountsList");
+  if (!list) return;
+  const entries = Object.entries(accountsMirror)
+    .map(([key, u]) => ({ key, name: (u && u.username) || key }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  if ($("accountsCount")) $("accountsCount").textContent = entries.length;
+  list.innerHTML = entries.length
+    ? entries.map((e) => {
+        const crown = championsMirror[e.key] === true ? ` <span class="lb-crown" title="Reigning champion">👑</span>` : "";
+        const pts = Number(pointsMirror[e.key]) || 0;
+        return `<li class="acct-row">` +
+          `<span class="acct-name">${escapeHtml(e.name)}${crown}</span>` +
+          `<span class="acct-pts">${pts} pt${pts === 1 ? "" : "s"}</span>` +
+          `<button class="acct-del danger" type="button" data-key="${escapeHtml(e.key)}" data-name="${escapeHtml(e.name)}">Delete</button>` +
+        `</li>`;
+      }).join("")
+    : `<li class="acct-empty">No accounts yet.</li>`;
+}
+async function deleteAccount(key, name) {
+  if (!key) return;
+  if (!confirm(`Delete “${name}” and all their data (points, crown, history, results)? This can't be undone.`)) return;
+  const msg = (m, k) => { const el = $("accountsMsg"); if (el) { el.textContent = m; el.className = "auth-msg " + (k || ""); } };
+  try {
+    if (db) {
+      const updates = {
+        [`users/${key}`]: null,
+        [`points/${key}`]: null,
+        [`champions/${key}`]: null,
+        [`events/${EVENT_ID}/history/${key}`]: null,
+      };
+      // Drop any live assignments belonging to this player (matched by uid).
+      for (const [id, a] of Object.entries(assignments)) {
+        if (a && (a.uid === key || userKey(a.discord || "") === key)) updates[`events/${EVENT_ID}/assignments/${id}`] = null;
+      }
+      await update(ref(db), updates);
+    } else {
+      const u = localUsers(); delete u[key];
+      try { localStorage.setItem(LS_USERS, JSON.stringify(u)); } catch { /* ignore */ }
+      accountsMirror = u; renderAccounts();
+    }
+    msg(`Deleted “${name}”.`, "ok");
+  } catch (e) { msg("Delete failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// A 👑 for the crown holder(s), keyed by the player's userKey. Used in the
+// assignments list and the accounts panel; the leaderboard renders its own.
+function crownFor(discord) {
+  return (discord && championsMirror[userKey(discord)] === true)
+    ? ` <span class="crown" title="Reigning champion">👑</span>` : "";
 }
 
 // ─────────────────────── Card-art admin ──────────────────────────
@@ -1968,6 +2087,11 @@ function wireAdmin() {
   $("storeResetBtn").addEventListener("click", storeEventAndReset);
   $("maType").addEventListener("change", populateManualOptions);
   $("maAssignBtn").addEventListener("click", manualAssign);
+  if ($("rulesSaveBtn")) $("rulesSaveBtn").addEventListener("click", saveLeagueRules);
+  if ($("accountsList")) $("accountsList").addEventListener("click", (e) => {
+    const del = e.target.closest(".acct-del");
+    if (del) deleteAccount(del.dataset.key, del.dataset.name);
+  });
   wireCardArt();
 }
 
@@ -2163,6 +2287,8 @@ function refreshAdminUI() {
   setDisp("adminPanel", showTools ? "block" : "none");
   setDisp("cardArtPanel", showTools ? "block" : "none");
   setDisp("densityPanel", showTools ? "block" : "none");
+  setDisp("rulesPanel", showTools ? "block" : "none");
+  setDisp("accountsPanel", showTools ? "block" : "none");
 
   // Claiming now lives on admin.html (its presence gates the claim UI); the
   // create-only rule still prevents a leaked link from seizing ownership.
@@ -2176,7 +2302,7 @@ function refreshAdminUI() {
   }
 
   if (isAdmin) { populateManualOptions(); refreshUserList(); }
-  if (showTools) { renderCardArtGrid(); renderDensity(); }
+  if (showTools) { renderCardArtGrid(); renderDensity(); syncRulesEditor(); }
   renderResults();   // reflect re-roll / remove buttons (wheel page)
 }
 
@@ -2203,6 +2329,8 @@ async function claimAdmin() {
 function boot() {
   const page = (document.body && document.body.dataset.page) || "wheel";
   detectManaFont();
+  rulesModal = initRulesModal();       // 📜 Rules button + modal (all pages)
+  rulesModal.setText(leagueRulesText);
   restoreSession();
 
   // Wheel page only: the spinner, guest roll, and results list.

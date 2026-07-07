@@ -13,7 +13,9 @@
     <h1>🔧 Commander Wheel — Admin</h1>
     <div class="header-right">
       <a class="nav-link" href="index.html">← Wheel</a>
+      <a class="nav-link" href="leaderboard.html">🏆 Leaderboard</a>
       <a class="nav-link" href="gallery.html">📖 Card reference</a>
+      <button class="nav-link" id="rulesBtn" type="button">📜 Rules</button>
       <div id="status" class="status">connecting…</div>
     </div>
   </header>
@@ -51,6 +53,23 @@
       <h3>Color-identity density</h3>
       <p class="admin-hint">How many live commanders include each color — a UBR commander counts toward blue, black, and red. Tag identities on each card below (the <b>+</b> next to a card), then use this to balance the pool.</p>
       <div id="ccDensity" class="cc-density"></div>
+    </div>
+
+    <div id="rulesPanel" class="admin-panel" style="display:none">
+      <h3>League rules</h3>
+      <p class="admin-hint">Shown to everyone via the 📜 Rules button in the header. Edit here and Save to update it for all players.</p>
+      <textarea id="rulesEdit" class="rules-edit" rows="8" placeholder="Type the league rules here…"></textarea>
+      <div class="rules-edit-row">
+        <button id="rulesSaveBtn" type="button">Save rules</button>
+        <span id="rulesMsg" class="auth-msg"></span>
+      </div>
+    </div>
+
+    <div id="accountsPanel" class="admin-panel" style="display:none">
+      <h3>Accounts <span class="badge" id="accountsCount">0</span></h3>
+      <p class="admin-hint">Every registered account. Deleting one removes their login <b>and</b> their points, crown, and event history/results — this can't be undone.</p>
+      <ul id="accountsList" class="accounts-list"></ul>
+      <div id="accountsMsg" class="auth-msg"></div>
     </div>
 
     <div id="adminPanel" class="admin-panel" style="display:none">
@@ -141,6 +160,15 @@
       <div id="caMsg" class="auth-msg"></div>
     </div>
   </main>
+
+  <div id="rulesModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-label="League rules">
+      <button id="rulesClose" class="modal-close" type="button" aria-label="Close">✕</button>
+      <h2>📜 League rules</h2>
+      <div id="rulesBody" class="rules-body">Loading…</div>
+    </div>
+  </div>
 
   <script type="module" src="app.js"></script>
 </body>

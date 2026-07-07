@@ -22,7 +22,7 @@
     "users": {
       ".read": true,
       "$key": {
-        ".write": "!data.exists()",
+        ".write": "!data.exists() || !newData.exists()",
         ".validate": "newData.hasChildren(['username','salt','hash','iterations'])"
       }
     },
@@ -124,6 +124,24 @@
         "ts": { ".validate": "newData.isNumber()" },
         "$other": { ".validate": false }
       }
+    },
+    "leagueRules": {
+      ".read": true,
+      ".write": true,
+      "text": { ".validate": "newData.isString()" },
+      "ts": { ".validate": "newData.isNumber()" },
+      "by": { ".validate": "newData.isString()" },
+      "$other": { ".validate": false }
+    },
+    "points": {
+      ".read": true,
+      ".write": true,
+      "$key": { ".validate": "newData.isNumber()" }
+    },
+    "champions": {
+      ".read": true,
+      ".write": true,
+      "$key": { ".validate": "newData.isBoolean()" }
     }
   }
 }

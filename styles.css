@@ -521,3 +521,53 @@ button.cc-shift-pip:hover { outline: 2px solid var(--err); outline-offset: 1px; 
 .g-item.names-only { padding: 8px 12px; }
 .g-tag.added { color: var(--ok); }
 .g-tag.updated { color: #7fc7d9; }
+
+/* The 📜 Rules button reuses .nav-link but is a <button>. */
+button.nav-link { background: none; font: inherit; cursor: pointer; line-height: 1.25; }
+
+/* ── Rules popup (all pages) ── */
+.modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
+.modal[hidden] { display: none; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.6); }
+.modal-box { position: relative; z-index: 1; width: min(680px, 92vw); max-height: 82vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 22px 24px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.modal-box h2 { margin: 0 0 12px; color: var(--gold); font-size: 1.15rem; }
+.modal-close { position: absolute; top: 10px; right: 12px; background: none; border: 0; color: var(--muted);
+  font-size: 1.1rem; cursor: pointer; }
+.modal-close:hover { color: var(--ink); }
+.rules-body { white-space: pre-wrap; line-height: 1.55; color: var(--ink); font-size: .95rem; }
+
+/* ── Admin: rules editor ── */
+.rules-edit { width: 100%; box-sizing: border-box; resize: vertical; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.15); background: var(--panel); color: var(--ink); font: inherit; font-size: .9rem; }
+.rules-edit-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.rules-edit-row button { border: 0; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 700;
+  background: linear-gradient(180deg, #f3d27a, var(--gold)); color: #2a1d00; }
+
+/* ── Admin: accounts panel ── */
+.accounts-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.acct-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px; background: var(--panel2); }
+.acct-name { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+.acct-pts { color: var(--muted); font-size: .82rem; white-space: nowrap; }
+.acct-del { border: 0; padding: 5px 12px; border-radius: 8px; cursor: pointer; }
+.acct-empty { color: var(--muted); font-size: .85rem; }
+
+/* ── Leaderboard page ── */
+.lb-main { max-width: 760px; margin: 0 auto; padding: 20px clamp(16px, 3vw, 44px) 60px; }
+.lb-note { color: var(--muted); font-size: .85rem; margin: 0 0 16px; }
+.lb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lb-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px; background: var(--panel); }
+.lb-row.champ { border-color: rgba(231,193,74,.5); background: rgba(231,193,74,.08); }
+.lb-rank { width: 1.6em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lb-name { flex: 1 1 auto; min-width: 0; font-size: .98rem; word-break: break-word; }
+.lb-pts { font-weight: 800; font-variant-numeric: tabular-nums; }
+.lb-ctrl { display: inline-flex; gap: 6px; }
+.lb-ctrl button { border: 1px solid rgba(255,255,255,.18); background: var(--panel2); color: var(--ink);
+  border-radius: 8px; padding: 4px 10px; cursor: pointer; font-weight: 700; }
+.lb-plus:hover { border-color: var(--ok); color: var(--ok); }
+.lb-minus:hover { border-color: var(--err); color: var(--err); }
+.lb-empty { color: var(--muted); text-align: center; padding: 24px; }
+.lb-crown, .crown { color: var(--gold); }
