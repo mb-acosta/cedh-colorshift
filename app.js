@@ -80,10 +80,12 @@ function cardsForName(name, cls) {
 // color variants that share a base name stay independent.
 let ORIGINAL_ART = new Map(COMMANDERS.map((c) => [c.name, { img: c.img, backImg: c.backImg }]));
 let cardImageOverrides = {};     // encKey(name) -> { img?, backImg?, ts?, by? }
+let cardImageStaged = {};        // encKey(name) -> { img?, backImg?, ts?, by? }  — staged art (admin-only, publishes on Store-event)
 let cardMetaOverrides = {};      // encKey(name) -> { partner: bool }  — partner-status overrides
 let customCards = {};            // encKey(name) -> { name, back?, img, backImg? }  — admin-added cards
 let cardStatusOverrides = {};    // encKey(name) -> { state, ts?, by? }  — staged roster status (see below)
 const LS_CARDIMG = "cw_card_images";   // local-preview fallback stores
+const LS_CARDIMG_STAGED = "cw_card_images_staged";
 const LS_CARDMETA = "cw_card_meta";
 const LS_CUSTOMCARDS = "cw_custom_cards";
 const LS_CARDSTATUS = "cw_card_status";
@@ -143,6 +145,13 @@ function rebuildCommanders() {
 // Each card-data Firebase node has its own mirror; any of them changing merges
 // back over the list and re-renders every spot card data is shown.
 function applyCardImages(snap)  { cardImageOverrides = snap || {}; onCardDataChanged(); }
+// Staged art is admin-only preview — it never touches the live COMMANDERS list
+// (players/gallery keep the current art until it's published), so this only
+// refreshes the card-art grid rather than rebuilding the wheel.
+function applyCardImageStaged(snap) {
+  cardImageStaged = snap || {};
+  if (isAdmin && !adminCollapsed && typeof renderCardArtGrid === "function") renderCardArtGrid();
+}
 function applyCardMeta(snap)    { cardMetaOverrides = snap || {}; onCardDataChanged(); }
 function applyCustomCards(snap) { customCards = snap || {}; onCardDataChanged(); }
 function applyCardStatus(snap)  { cardStatusOverrides = snap || {}; onCardDataChanged(); }
@@ -232,6 +241,11 @@ function initFirebase() {
       applyCardImages(snap.val());
     }, (err) => {
       console.warn("Card-art overrides unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "cardImagesStaged"), (snap) => {
+      applyCardImageStaged(snap.val());
+    }, (err) => {
+      console.warn("Staged card-art unavailable (publish database.rules.json?):", err.message);
     });
     onValue(ref(db, "cardMeta"), (snap) => {
       applyCardMeta(snap.val());
@@ -905,8 +919,12 @@ async function storeEventAndReset() {
   // still applies even when there are no results to archive.
   const staged = Object.entries(cardStatusOverrides)
     .filter(([, s]) => s && (s.state === "pending" || s.state === "pendingRemoval"));
-  if (entries.length === 0 && staged.length === 0) {
-    return alert("Nothing to store — no results and no staged roster changes.");
+  // Staged art changes publish on the same rotation (each entry may stage a front
+  // and/or a back face).
+  const stagedArt = Object.entries(cardImageStaged)
+    .filter(([, v]) => v && (typeof v.img === "string" || typeof v.backImg === "string"));
+  if (entries.length === 0 && staged.length === 0 && stagedArt.length === 0) {
+    return alert("Nothing to store — no results and no staged roster or art changes.");
   }
 
   const pendCount = staged.filter(([, s]) => s.state === "pending").length;
@@ -915,6 +933,7 @@ async function storeEventAndReset() {
   if (entries.length) parts.push(`store ${entries.length} result(s) and reset the pool`);
   if (pendCount) parts.push(`publish ${pendCount} future upload(s)`);
   if (remCount) parts.push(`remove ${remCount} commander(s)`);
+  if (stagedArt.length) parts.push(`apply ${stagedArt.length} art change(s)`);
   const detail = entries.length
     ? "\n\nAll commanders return to the pool, but each player keeps their stored result and can't roll that exact result again."
     : "";
@@ -933,6 +952,17 @@ async function storeEventAndReset() {
       else if (st.state === "pendingRemoval") s[enc] = { state: "hidden", ts, by };
     }
     writeLocalCardStatus(s); cardStatusOverrides = s;
+    if (stagedArt.length) {
+      const im = readLocalCardImages();
+      for (const [enc, v] of stagedArt) {
+        im[enc] = { ...(im[enc] || {}) };
+        if (typeof v.img === "string") im[enc].img = v.img;
+        if (typeof v.backImg === "string") im[enc].backImg = v.backImg;
+        im[enc].ts = ts; im[enc].by = by;
+      }
+      writeLocalCardImages(im); cardImageOverrides = im;
+      writeLocalCardImageStaged({}); cardImageStaged = {};
+    }
     rebuildCommanders();
     recomputeUsed(); renderResults(); renderStats(); endSequence();
     if (isAdmin) { populateManualOptions(); if (!adminCollapsed) renderCardArtGrid(); }
@@ -962,6 +992,13 @@ async function storeEventAndReset() {
   for (const [enc, st] of staged) {
     if (st.state === "pending") updates[`cardStatus/${enc}`] = null;             // future upload → active
     else if (st.state === "pendingRemoval") updates[`cardStatus/${enc}`] = { state: "hidden", ts, by }; // future removal → retired
+  }
+  for (const [enc, v] of stagedArt) {
+    if (typeof v.img === "string") updates[`cardImages/${enc}/img`] = v.img;      // staged art → live
+    if (typeof v.backImg === "string") updates[`cardImages/${enc}/backImg`] = v.backImg;
+    updates[`cardImages/${enc}/ts`] = ts;
+    updates[`cardImages/${enc}/by`] = by;
+    updates[`cardImagesStaged/${enc}`] = null;                                    // clear the stage
   }
   await update(ref(db), updates);
   endSequence();
@@ -1060,6 +1097,8 @@ function setCaMsg(msg, kind) {
 }
 function readLocalCardImages() { try { return JSON.parse(localStorage.getItem(LS_CARDIMG) || "{}") || {}; } catch { return {}; } }
 function writeLocalCardImages(o) { try { localStorage.setItem(LS_CARDIMG, JSON.stringify(o)); } catch { /* ignore */ } }
+function readLocalCardImageStaged() { try { return JSON.parse(localStorage.getItem(LS_CARDIMG_STAGED) || "{}") || {}; } catch { return {}; } }
+function writeLocalCardImageStaged(o) { try { localStorage.setItem(LS_CARDIMG_STAGED, JSON.stringify(o)); } catch { /* ignore */ } }
 function readLocalCardMeta() { try { return JSON.parse(localStorage.getItem(LS_CARDMETA) || "{}") || {}; } catch { return {}; } }
 function writeLocalCardMeta(o) { try { localStorage.setItem(LS_CARDMETA, JSON.stringify(o)); } catch { /* ignore */ } }
 function readLocalCustomCards() { try { return JSON.parse(localStorage.getItem(LS_CUSTOMCARDS) || "{}") || {}; } catch { return {}; } }
@@ -1080,14 +1119,80 @@ async function writeCardOverride(name, face, id) {
   }
 }
 
-// Set a face's art from a pasted/dropped Drive link, URL, or bare ID.
+// Set a face's art from a pasted/dropped Drive link, URL, or bare ID — live for
+// everyone immediately. Any staged change to the same face is now moot, so drop it.
 async function setFaceOverride(name, face, rawInput) {
   const id = extractDriveId(rawInput);
   if (!id) return setCaMsg("Couldn't find a Drive ID in that — paste a share link or the file ID.", "err");
   try {
     await writeCardOverride(name, face, id);
-    setCaMsg(`Updated ${name} (${face === "img" ? "front" : "back"}).`, "ok");
+    if (hasStagedFace(name, face)) await clearStagedFace(name, face);
+    setCaMsg(`Updated ${name} (${face === "img" ? "front" : "back"}) — live for everyone.`, "ok");
   } catch (e) { setCaMsg("Write failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// ── Staged card-art changes (request A) ──
+// A staged face lives at cardImagesStaged/<enc>/<face>: an admin-only preview that
+// never reaches players or the gallery. storeEventAndReset() folds it into
+// cardImages (live for everyone) on the next Store-event — mirroring how staged
+// add/remove ride along on the same rotation. "Set now" bypasses staging entirely.
+const hasStagedFace = (name, face) => {
+  const st = cardImageStaged[encKey(name)];
+  return !!(st && typeof st[face] === "string");
+};
+
+// Stage a face's art for the next Store-event (does NOT change what players see).
+async function stageFaceOverride(name, face, rawInput) {
+  const id = extractDriveId(rawInput);
+  if (!id) return setCaMsg("Couldn't find a Drive ID in that — paste a share link or the file ID.", "err");
+  const enc = encKey(name);
+  try {
+    if (db) {
+      await update(ref(db, "cardImagesStaged/" + enc), { [face]: id, ts: Date.now(), by: byName() });
+    } else {
+      const s = readLocalCardImageStaged();
+      s[enc] = { ...(s[enc] || {}), [face]: id, ts: Date.now(), by: byName() };
+      writeLocalCardImageStaged(s); applyCardImageStaged(s);
+    }
+    setCaMsg(`Staged ${name} (${face === "img" ? "front" : "back"}) — goes live on the next “Store event & reset pool”.`, "ok");
+  } catch (e) { setCaMsg("Stage failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// Drop a staged face (dropping the whole node if neither face is staged, since a
+// node with neither img nor backImg would fail the rules' validation). Shared by
+// discard, publish, and "Set now".
+async function clearStagedFace(name, face) {
+  const enc = encKey(name);
+  const other = face === "img" ? "backImg" : "img";
+  if (db) {
+    const cur = (await get(ref(db, "cardImagesStaged/" + enc))).val() || {};
+    if (typeof cur[other] === "string") await update(ref(db, "cardImagesStaged/" + enc), { [face]: null, ts: Date.now(), by: byName() });
+    else await remove(ref(db, "cardImagesStaged/" + enc));
+  } else {
+    const s = readLocalCardImageStaged();
+    if (s[enc]) { delete s[enc][face]; if (!s[enc].img && !s[enc].backImg) delete s[enc]; }
+    writeLocalCardImageStaged(s); applyCardImageStaged(s);
+  }
+}
+
+// Publish a staged face right now: move it into cardImages (live) and clear the stage.
+async function publishStagedFace(name, face) {
+  const st = cardImageStaged[encKey(name)];
+  const id = st && typeof st[face] === "string" ? st[face] : null;
+  if (!id) return;
+  try {
+    await writeCardOverride(name, face, id);
+    await clearStagedFace(name, face);
+    setCaMsg(`Published ${name} (${face === "img" ? "front" : "back"}) — now live for everyone.`, "ok");
+  } catch (e) { setCaMsg("Publish failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// Discard a staged face without publishing it (players never saw it, so nothing changes for them).
+async function discardStagedFace(name, face) {
+  try {
+    await clearStagedFace(name, face);
+    setCaMsg(`Discarded the staged ${face === "img" ? "front" : "back"} for ${name}.`, "ok");
+  } catch (e) { setCaMsg("Discard failed: " + e.message, "err"); }
 }
 
 // Remove a face override. If the other face has no override, drop the whole node
@@ -1242,22 +1347,36 @@ async function deleteCustomCard(name) {
   } catch (e) { setCaMsg("Remove failed: " + e.message, "err"); }
 }
 
-// One editable face inside the admin grid.
+// One editable face inside the admin grid. When a change is staged for this face
+// we preview the staged art (admin-only — players still see the live art) with a
+// badge, and swap the Set/Revert controls for Publish-now / Discard.
 function faceTile(c, face) {
-  const id = face === "img" ? c.img : c.backImg;
-  const ov = cardImageOverrides[encKey(c.name)];
+  const enc = encKey(c.name);
+  const liveId = face === "img" ? c.img : c.backImg;
+  const ov = cardImageOverrides[enc];
   const overridden = !!(ov && typeof ov[face] === "string");
+  const st = cardImageStaged[enc];
+  const stagedId = (st && typeof st[face] === "string") ? st[face] : null;
+  const shownId = stagedId || liveId;
   const label = face === "img" ? "Front" : "Back";
-  const thumb = id
-    ? `<img class="ca-thumb" src="${driveImg(id)}" alt="${escapeHtml(c.name)} ${label}" loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('broken')">`
+  const badge = stagedId
+    ? ` <span class="ca-badge staged">⏳ staged</span>`
+    : (overridden ? ` <span class="ca-badge">overridden</span>` : "");
+  const thumb = shownId
+    ? `<img class="ca-thumb" src="${driveImg(shownId)}" alt="${escapeHtml(c.name)} ${label}" loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('broken')">`
     : `<div class="ca-thumb ca-empty">no image</div>`;
-  return `<div class="ca-face${overridden ? " overridden" : ""}" data-name="${escapeHtml(c.name)}" data-face="${face}">` +
-    `<div class="ca-face-label">${label}${overridden ? ` <span class="ca-badge">overridden</span>` : ""}</div>` +
+  return `<div class="ca-face${overridden ? " overridden" : ""}${stagedId ? " staged" : ""}" data-name="${escapeHtml(c.name)}" data-face="${face}">` +
+    `<div class="ca-face-label">${label}${badge}</div>` +
     thumb +
     `<div class="ca-drop-hint">drop a Drive link</div>` +
     `<div class="ca-tools">` +
       `<input class="ca-input" type="text" placeholder="link or ID" autocomplete="off">` +
-      `<button class="ca-set" type="button">Set</button>` +
+      `<button class="ca-set" type="button" title="Apply now — live for everyone">Set now</button>` +
+      `<button class="ca-stage" type="button" title="Stage — publishes on the next “Store event & reset pool”">⏳ Stage</button>` +
+      (stagedId
+        ? `<button class="ca-publish ok" type="button" title="Publish the staged art now">Publish now</button>` +
+          `<button class="ca-discard-staged" type="button">Discard staged</button>`
+        : "") +
       `<button class="ca-revert" type="button"${overridden ? "" : " hidden"}>Revert</button>` +
     `</div>` +
   `</div>`;
@@ -1570,6 +1689,13 @@ function wireCardArt() {
       if (e.target.closest(".ca-set")) {
         const inp = face.querySelector(".ca-input");
         setFaceOverride(name, f, inp ? inp.value : "");
+      } else if (e.target.closest(".ca-stage")) {
+        const inp = face.querySelector(".ca-input");
+        stageFaceOverride(name, f, inp ? inp.value : "");
+      } else if (e.target.closest(".ca-publish")) {
+        publishStagedFace(name, f);
+      } else if (e.target.closest(".ca-discard-staged")) {
+        discardStagedFace(name, f);
       } else if (e.target.closest(".ca-revert")) {
         revertFace(name, f);
       }
@@ -1700,6 +1826,7 @@ function boot() {
     // Seed the mirrors, then a single rebuild so custom cards + partner flips
     // + staged roster status all show.
     cardImageOverrides = readLocalCardImages();
+    cardImageStaged = readLocalCardImageStaged();
     cardMetaOverrides = readLocalCardMeta();
     cardStatusOverrides = readLocalCardStatus();
     applyCustomCards(readLocalCustomCards());

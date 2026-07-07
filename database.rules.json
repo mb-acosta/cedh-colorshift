@@ -45,6 +45,18 @@
         "$other": { ".validate": false }
       }
     },
+    "cardImagesStaged": {
+      ".read": true,
+      ".write": true,
+      "$key": {
+        ".validate": "newData.hasChild('img') || newData.hasChild('backImg')",
+        "img": { ".validate": "newData.isString()" },
+        "backImg": { ".validate": "newData.isString()" },
+        "ts": { ".validate": "newData.isNumber()" },
+        "by": { ".validate": "newData.isString()" },
+        "$other": { ".validate": false }
+      }
+    },
     "cardMeta": {
       ".read": true,
       ".write": true,

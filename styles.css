@@ -314,8 +314,10 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 .ca-face { flex: 1 1 0; min-width: 0; border: 2px dashed transparent; border-radius: 8px; padding: 4px; text-align: center; }
 .ca-face.drop { border-color: var(--gold); background: rgba(231,193,74,.1); }
 .ca-face.overridden { border-color: rgba(95,208,138,.5); border-style: solid; }
+.ca-face.staged { border-color: rgba(231,193,74,.6); border-style: solid; background: rgba(231,193,74,.06); }
 .ca-face-label { font-size: .72rem; color: var(--muted); margin-bottom: 4px; }
 .ca-badge { color: var(--ok); font-size: .68rem; }
+.ca-badge.staged { color: var(--gold); }
 .ca-thumb { width: 100%; border-radius: 6px; box-shadow: 0 3px 10px rgba(0,0,0,.5); background: var(--panel2); display: block; }
 .ca-thumb.broken { display: none; }
 .ca-empty { display: flex; align-items: center; justify-content: center; aspect-ratio: 5 / 7; color: var(--muted); font-size: .72rem; }
@@ -325,6 +327,10 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
   background: var(--panel2); color: var(--ink); font: inherit; font-size: .74rem; }
 .ca-tools button { padding: 3px 8px; border-radius: 6px; cursor: pointer; font-size: .74rem;
   background: var(--panel2); color: var(--ink); border: 1px solid rgba(255,255,255,.18); }
+.ca-tools button:hover { border-color: var(--gold); }
+.ca-tools .ca-stage { border-color: rgba(231,193,74,.4); color: var(--gold); }
+.ca-tools .ca-publish.ok { border-color: rgba(95,208,138,.45); color: var(--ok); }
+.ca-tools .ca-publish.ok:hover { background: rgba(95,208,138,.12); border-color: rgba(95,208,138,.65); }
 .ca-name { font-size: .82rem; text-align: center; margin-top: 6px; word-break: break-word; line-height: 1.35; }
 .ca-flip { color: var(--muted); font-size: .82em; display: block; }
 
