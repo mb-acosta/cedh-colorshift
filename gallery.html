@@ -17,17 +17,71 @@
     <div class="gallery-bar">
       <input id="gallerySearch" type="text" placeholder="Search commanders…" autocomplete="off" />
       <span class="gallery-count"><span class="badge" id="galleryCount">0</span> cards</span>
+      <div class="view-toggle" role="group" aria-label="View">
+        <button type="button" class="view-btn" data-view="grid">▦ Grid</button>
+        <button type="button" class="view-btn" data-view="list">☰ List</button>
+      </div>
     </div>
-    <ul id="gallery" class="gallery"></ul>
 
-    <section id="galleryPendingSec" class="gallery-admin-sec" style="display:none">
-      <h2 class="gallery-admin-head">⏳ Future additions <span class="gallery-admin-note">admin only — staged, not yet live for players</span></h2>
-      <ul id="galleryPending" class="gallery"></ul>
+    <div id="colorFilters" class="filter-chips" hidden>
+      <span class="filter-label">Color identity:</span>
+      <button type="button" class="filter-chip" data-color="W"><span class="cc-pip cc-W">W</span></button>
+      <button type="button" class="filter-chip" data-color="U"><span class="cc-pip cc-U">U</span></button>
+      <button type="button" class="filter-chip" data-color="B"><span class="cc-pip cc-B">B</span></button>
+      <button type="button" class="filter-chip" data-color="R"><span class="cc-pip cc-R">R</span></button>
+      <button type="button" class="filter-chip" data-color="G"><span class="cc-pip cc-G">G</span></button>
+      <button type="button" class="filter-chip" data-color="C"><span class="cc-pip cc-c">◇</span> Colorless</button>
+      <button type="button" id="myCmdBtn" class="filter-chip">🎯 My commander</button>
+      <button type="button" id="clearColors" class="filter-chip">Clear</button>
+      <span id="colorHint" class="filter-hint"></span>
+    </div>
+
+    <section id="secLive" class="gallery-sec">
+      <button type="button" class="gallery-sec-head" data-sec="live" aria-expanded="true">
+        <span class="gallery-caret" aria-hidden="true"></span>
+        <span class="gallery-sec-title">Live commanders</span>
+        <span class="gallery-sec-count" id="liveCount">0</span>
+        <span class="gallery-sec-note">in the pool now</span>
+      </button>
+      <div class="gallery-sec-body">
+        <ul id="gallery" class="gallery"></ul>
+      </div>
     </section>
 
-    <section id="galleryRetiredSec" class="gallery-admin-sec" style="display:none">
-      <h2 class="gallery-admin-head">🚫 Retired / removed <span class="gallery-admin-note">admin only — removed from the pool, available to revolve back in</span></h2>
-      <ul id="galleryRetired" class="gallery"></ul>
+    <section id="secFuture" class="gallery-sec gallery-admin-sec" style="display:none">
+      <button type="button" class="gallery-sec-head" data-sec="future" aria-expanded="true">
+        <span class="gallery-caret" aria-hidden="true"></span>
+        <span class="gallery-sec-title">⏳ Future updates</span>
+        <span class="gallery-sec-count" id="futureCount">0</span>
+        <span class="gallery-sec-note">additions &amp; art changes coming on the next store event</span>
+      </button>
+      <div class="gallery-sec-body">
+        <ul id="galleryFuture" class="gallery"></ul>
+      </div>
+    </section>
+
+    <section id="secLeaving" class="gallery-sec gallery-admin-sec" style="display:none">
+      <button type="button" class="gallery-sec-head" data-sec="leaving" aria-expanded="true">
+        <span class="gallery-caret" aria-hidden="true"></span>
+        <span class="gallery-sec-title">⏳ Leaving soon</span>
+        <span class="gallery-sec-count" id="leavingCount">0</span>
+        <span class="gallery-sec-note">still rollable now — gone after the next store event</span>
+      </button>
+      <div class="gallery-sec-body">
+        <ul id="galleryLeaving" class="gallery"></ul>
+      </div>
+    </section>
+
+    <section id="secRetired" class="gallery-sec gallery-admin-sec" style="display:none">
+      <button type="button" class="gallery-sec-head" data-sec="retired" aria-expanded="true">
+        <span class="gallery-caret" aria-hidden="true"></span>
+        <span class="gallery-sec-title">🚫 Retired / removed</span>
+        <span class="gallery-sec-count" id="retiredCount">0</span>
+        <span class="gallery-sec-note">admin only — removed from the pool, available to revolve back in</span>
+      </button>
+      <div class="gallery-sec-body">
+        <ul id="galleryRetired" class="gallery"></ul>
+      </div>
     </section>
   </main>
 

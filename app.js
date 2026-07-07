@@ -84,11 +84,15 @@ let cardImageStaged = {};        // encKey(name) -> { img?, backImg?, ts?, by? }
 let cardMetaOverrides = {};      // encKey(name) -> { partner: bool }  — partner-status overrides
 let customCards = {};            // encKey(name) -> { name, back?, img, backImg? }  — admin-added cards
 let cardStatusOverrides = {};    // encKey(name) -> { state, ts?, by? }  — staged roster status (see below)
+let cardColorOverrides = {};     // encKey(name) -> { colors, ts?, by? }  — admin-declared color identity (WUBRG string; "" = colorless)
+let poolChangeOverrides = {};    // encKey(name) -> { kind: "added"|"updated", ts }  — last Store-event's pool changes
 const LS_CARDIMG = "cw_card_images";   // local-preview fallback stores
 const LS_CARDIMG_STAGED = "cw_card_images_staged";
 const LS_CARDMETA = "cw_card_meta";
 const LS_CUSTOMCARDS = "cw_custom_cards";
 const LS_CARDSTATUS = "cw_card_status";
+const LS_CARDCOLORS = "cw_card_colors";
+const LS_POOLCHANGES = "cw_pool_changes";
 
 // Pull a Google Drive file (or folder) ID out of a share link, embed URL, or a
 // bare ID pasted on its own. Returns null if nothing that looks like an ID is
@@ -135,6 +139,8 @@ function rebuildCommanders() {
     if (ov && typeof ov.backImg === "string") c.backImg = ov.backImg;
     const st = cardStatusOverrides[enc];
     c.status = (st && typeof st.state === "string") ? st.state : null;   // null = active
+    const col = cardColorOverrides[enc];
+    c.colors = (col && typeof col.colors === "string") ? col.colors : null;   // null = untagged, "" = colorless
   }
   // Swap into the live array in place (keep the const binding everyone imports).
   COMMANDERS.length = 0;
@@ -155,6 +161,12 @@ function applyCardImageStaged(snap) {
 function applyCardMeta(snap)    { cardMetaOverrides = snap || {}; onCardDataChanged(); }
 function applyCustomCards(snap) { customCards = snap || {}; onCardDataChanged(); }
 function applyCardStatus(snap)  { cardStatusOverrides = snap || {}; onCardDataChanged(); }
+// Color identity drives the admin density tracker (and, via REST, the gallery
+// filters) — a change re-merges c.colors onto the list and refreshes the grid/density.
+function applyCardColors(snap)  { cardColorOverrides = snap || {}; onCardDataChanged(); }
+// poolChanges is only read back so a Store-event can clear the previous rotation's
+// markers; nothing on these pages renders from it, so no rebuild is needed.
+function applyPoolChanges(snap) { poolChangeOverrides = snap || {}; }
 
 function onCardDataChanged() {
   rebuildCommanders();
@@ -167,7 +179,7 @@ function onCardDataChanged() {
   if (typeof updateSpinButton === "function" && wheel && !wheel.spinning) updateSpinButton();
   if (isAdmin) {
     populateManualOptions();
-    if (!adminCollapsed) renderCardArtGrid();
+    if (!adminCollapsed) { renderCardArtGrid(); renderDensity(); }
   }
 }
 
@@ -214,7 +226,7 @@ function initFirebase() {
       setStatus("● Connected — live", "ok");
       renderResults();
       renderStats();
-      if (phase === "main" && !wheel.spinning) buildMainWheel();
+      if (wheel && phase === "main" && !wheel.spinning) buildMainWheel();
       updateSpinButton();
       if (isAdmin) populateManualOptions();
     }, (err) => {
@@ -222,7 +234,7 @@ function initFirebase() {
     });
     onValue(historyRef, (snap) => {
       historyMirror = snap.val() || {};
-      if (phase === "main" && !wheel.spinning) buildMainWheel();
+      if (wheel && phase === "main" && !wheel.spinning) buildMainWheel();
       renderStats();
       updateSpinButton();
     }, (err) => {
@@ -261,6 +273,16 @@ function initFirebase() {
       applyCardStatus(snap.val());
     }, (err) => {
       console.warn("Card status unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "cardColors"), (snap) => {
+      applyCardColors(snap.val());
+    }, (err) => {
+      console.warn("Card colors unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "poolChanges"), (snap) => {
+      applyPoolChanges(snap.val());
+    }, (err) => {
+      console.warn("Pool changes unavailable (publish database.rules.json?):", err.message);
     });
     return true;
   } catch (e) {
@@ -451,6 +473,7 @@ function interleave(singles, partnerWedges) {
 }
 
 function buildMainWheel() {
+  if (!wheel) return;   // no canvas on the admin page
   const b = blocked();
   const singles = availableSingles(b).map((c, i) => ({
     label: c.name, weight: 1, kind: "single", payload: c,
@@ -470,6 +493,7 @@ function buildMainWheel() {
 }
 
 function buildPartnerWheel(excludeName) {
+  if (!wheel) return;   // no canvas on the admin page
   const b = blocked();
   let list;
   if (!excludeName) {
@@ -522,12 +546,14 @@ let isAdmin = false;
 
 function setStatus(msg, kind) {
   const el = $("status");
+  if (!el) return;
   el.textContent = msg;
   el.className = "status " + (kind || "");
 }
-function setWheelTitle(t) { $("wheelTitle").textContent = t; }
+function setWheelTitle(t) { const el = $("wheelTitle"); if (el) el.textContent = t; }
 function showResult(html, kind) {
   const el = $("result");
+  if (!el) return;
   el.innerHTML = html;
   el.className = "result show " + (kind || "");
 }
@@ -535,6 +561,7 @@ function showResult(html, kind) {
 function updateSpinButton() {
   const spin = $("spinBtn");
   const guest = $("guestBtn");
+  if (!wheel || !spin || !guest) return;   // wheel page only
   // Guest Spin can only START a fresh roll — not continue a partner sequence.
   guest.disabled = wheel.spinning || phase !== "main";
   if (phase === "main") {
@@ -664,6 +691,7 @@ function resetToMain() {
 
 // ──────────────────────────── Rendering ───────────────────────────
 function renderStats() {
+  if (!$("stats")) return;   // wheel page only
   const b = blocked();
   const s = availableSingles(b).length;
   const c = openComboCount(b);
@@ -673,6 +701,7 @@ function renderStats() {
 }
 
 function renderResults() {
+  if (!$("results")) return;   // wheel page only
   const list = Object.entries(assignments).sort(([, a], [, b]) => (b.ts || 0) - (a.ts || 0));
   $("resultsCount").textContent = list.length;
   if (list.length === 0) {
@@ -888,7 +917,7 @@ async function deleteAssignment(key) {
   if (!firebaseReady) {
     delete assignments[key];
     recomputeUsed(); renderResults(); renderStats();
-    if (phase === "main" && !wheel.spinning) buildMainWheel();
+    if (wheel && phase === "main" && !wheel.spinning) buildMainWheel();
     if (isAdmin) populateManualOptions();
     return;
   }
@@ -963,9 +992,14 @@ async function storeEventAndReset() {
       writeLocalCardImages(im); cardImageOverrides = im;
       writeLocalCardImageStaged({}); cardImageStaged = {};
     }
+    // Refresh the added/updated markers for this rotation (replaces the previous set).
+    const pc = {};
+    for (const [enc] of stagedArt) pc[enc] = { kind: "updated", ts };
+    for (const [enc, st] of staged) if (st.state === "pending") pc[enc] = { kind: "added", ts };
+    writeLocalPoolChanges(pc); poolChangeOverrides = pc;
     rebuildCommanders();
     recomputeUsed(); renderResults(); renderStats(); endSequence();
-    if (isAdmin) { populateManualOptions(); if (!adminCollapsed) renderCardArtGrid(); }
+    if (isAdmin) { populateManualOptions(); if (!adminCollapsed) { renderCardArtGrid(); renderDensity(); } }
     return;
   }
 
@@ -1000,6 +1034,12 @@ async function storeEventAndReset() {
     updates[`cardImages/${enc}/by`] = by;
     updates[`cardImagesStaged/${enc}`] = null;                                    // clear the stage
   }
+  // Refresh the "added/updated" markers players see on the reference page: clear
+  // the previous rotation's, then mark this one's — staged art = updated,
+  // future-upload going live = added (added wins if a card is somehow both).
+  for (const enc of Object.keys(poolChangeOverrides)) updates[`poolChanges/${enc}`] = null;
+  for (const [enc] of stagedArt) updates[`poolChanges/${enc}`] = { kind: "updated", ts };
+  for (const [enc, st] of staged) if (st.state === "pending") updates[`poolChanges/${enc}`] = { kind: "added", ts };
   await update(ref(db), updates);
   endSequence();
 }
@@ -1058,6 +1098,7 @@ async function manualAssign() {
 
 // Fill the manual-assign dropdowns from the pool-wide available list.
 function populateManualOptions() {
+  if (!$("maA")) return;   // admin page only
   const type = $("maType") ? $("maType").value : "single";
   const b = { s: usedSingles, c: usedCombos };
   const opt = (v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`;
@@ -1079,8 +1120,9 @@ async function refreshUserList() {
   else { users = localUsers(); }
   registeredKeys = new Set(Object.keys(users));   // node keys are userKeys
   const names = Object.values(users).map((u) => u && u.username).filter(Boolean).sort();
-  $("userList").innerHTML = names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
-  renderResults();   // reflect account badges once the list has loaded
+  const ul = $("userList");   // datalist lives only on the admin page…
+  if (ul) ul.innerHTML = names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
+  renderResults();   // …but registeredKeys still feeds account badges on the wheel page
 }
 
 // ─────────────────────── Card-art admin ──────────────────────────
@@ -1105,6 +1147,10 @@ function readLocalCustomCards() { try { return JSON.parse(localStorage.getItem(L
 function writeLocalCustomCards(o) { try { localStorage.setItem(LS_CUSTOMCARDS, JSON.stringify(o)); } catch { /* ignore */ } }
 function readLocalCardStatus() { try { return JSON.parse(localStorage.getItem(LS_CARDSTATUS) || "{}") || {}; } catch { return {}; } }
 function writeLocalCardStatus(o) { try { localStorage.setItem(LS_CARDSTATUS, JSON.stringify(o)); } catch { /* ignore */ } }
+function readLocalCardColors() { try { return JSON.parse(localStorage.getItem(LS_CARDCOLORS) || "{}") || {}; } catch { return {}; } }
+function writeLocalCardColors(o) { try { localStorage.setItem(LS_CARDCOLORS, JSON.stringify(o)); } catch { /* ignore */ } }
+function readLocalPoolChanges() { try { return JSON.parse(localStorage.getItem(LS_POOLCHANGES) || "{}") || {}; } catch { return {}; } }
+function writeLocalPoolChanges(o) { try { localStorage.setItem(LS_POOLCHANGES, JSON.stringify(o)); } catch { /* ignore */ } }
 
 // Write one face override for a commander (Firebase, or localStorage offline).
 async function writeCardOverride(name, face, id) {
@@ -1235,6 +1281,40 @@ async function setPartnerFlag(name, on) {
     }
     setCaMsg(`${name} is ${on ? "now" : "no longer"} a partner.`, "ok");
   } catch (e) { setCaMsg("Partner update failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// ── Color identity (color-shifted league) ──
+// Each commander carries an admin-declared color identity, stored per-card in
+// cardColors/<enc> as a canonical WUBRG-ordered string ("" = colorless). Because
+// this is a color-SHIFTED league, official/Scryfall colors don't apply — the
+// admin declares each card's identity, one color at a time.
+const WUBRG = ["W", "U", "B", "R", "G"];
+// Canonicalize any input to a deduped, WUBRG-ordered string of valid letters.
+function normalizeColors(input) {
+  const have = new Set(String(input || "").toUpperCase().split("").filter((ch) => WUBRG.includes(ch)));
+  return WUBRG.filter((ch) => have.has(ch)).join("");
+}
+// The card's current identity string (untagged → "" so add/remove math works).
+function currentColorsFor(name) {
+  const col = cardColorOverrides[encKey(name)];
+  return (col && typeof col.colors === "string") ? col.colors : "";
+}
+// Write a card's color identity (mirrors setPartnerFlag). Empty string = colorless.
+async function setCardColors(name, colors) {
+  const enc = encKey(name);
+  const norm = normalizeColors(colors);
+  const ts = Date.now(), by = byName();
+  try {
+    if (db) {
+      await update(ref(db, "cardColors/" + enc), { colors: norm, ts, by });
+    } else {
+      const store = readLocalCardColors();
+      store[enc] = { ...(store[enc] || {}), colors: norm, ts, by };
+      writeLocalCardColors(store);
+      applyCardColors(store);
+    }
+    setCaMsg(`${name} identity: ${norm || "colorless"}.`, "ok");
+  } catch (e) { setCaMsg("Color update failed: " + e.message + " (publish database.rules.json?)", "err"); }
 }
 
 // ── Staged roster status (future upload / future removal) ──
@@ -1407,6 +1487,56 @@ function statusControls(c) {
   return btn("schedule", "⏳ Schedule removal") + (c.custom ? btn("discard", "✕ Remove", "danger") : "");
 }
 
+// Color-identity editor (admin grid). Current colors show as chips: WUBRG letters
+// are removable buttons, colorless is a static ◇. The + reveals a picker that adds
+// one color at a time (color-shifted league → the admin declares each identity).
+function colorPips(c) {
+  if (c.colors == null) return `<span class="cc-untagged">untagged</span>`;
+  if (c.colors === "") return `<span class="cc-pip cc-c" title="Colorless">◇</span>`;
+  return c.colors.split("").map((L) =>
+    `<button class="cc-pip cc-${L}" type="button" data-name="${escapeHtml(c.name)}" data-color="${L}" title="Remove ${L}">${L}</button>`
+  ).join("");
+}
+function colorEditor(c) {
+  const nm = escapeHtml(c.name);
+  const picks = WUBRG.map((L) =>
+    `<button class="cc-pick cc-${L}" type="button" data-name="${nm}" data-color="${L}" title="${L}">${L}</button>`).join("") +
+    `<button class="cc-pick cc-c" type="button" data-name="${nm}" data-color="" title="Colorless">◇</button>`;
+  return `<div class="cc-editor" data-name="${nm}">` +
+    `<span class="cc-pips">${colorPips(c)}</span>` +
+    `<button class="cc-add" type="button" title="Add a color to this identity">+</button>` +
+    `<span class="cc-picker" hidden>${picks}</span>` +
+  `</div>`;
+}
+
+// Color-identity density across the rollable pool (admin balancing tool). A
+// multicolor commander adds to each of its colors; a UBR commander → U, B, R each +1.
+function renderDensity() {
+  const host = $("ccDensity");
+  if (!host) return;   // admin page only
+  const live = COMMANDERS.filter((c) => c.status !== "pending" && c.status !== "hidden");
+  const total = live.length;
+  const counts = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+  let colorless = 0, untagged = 0;
+  for (const c of live) {
+    if (c.colors == null) { untagged++; continue; }
+    if (c.colors === "") { colorless++; continue; }
+    for (const L of c.colors) if (L in counts) counts[L]++;
+  }
+  const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+  const bar = (label, n, cls) =>
+    `<div class="cc-den-row">` +
+      `<span class="cc-den-swatch cc-${cls}"></span>` +
+      `<span class="cc-den-name">${label}</span>` +
+      `<div class="cc-den-track"><div class="cc-den-fill cc-${cls}" style="width:${pct(n)}%"></div></div>` +
+      `<span class="cc-den-val">${n} · ${pct(n)}%</span>` +
+    `</div>`;
+  host.innerHTML =
+    bar("White", counts.W, "W") + bar("Blue", counts.U, "U") + bar("Black", counts.B, "B") +
+    bar("Red", counts.R, "R") + bar("Green", counts.G, "G") + bar("Colorless", colorless, "c") +
+    `<div class="cc-den-total">${total} live commanders · ${untagged} untagged</div>`;
+}
+
 // Render the searchable card grid (only meaningful while the panel is visible).
 function renderCardArtGrid() {
   const grid = $("caGrid");
@@ -1427,6 +1557,7 @@ function renderCardArtGrid() {
         `${c.custom ? ` <span class="ca-custom-tag">added</span>` : ""}${statusTag(c)}</div>` +
       `<div class="ca-meta">` +
         `<label class="ca-partner"><input type="checkbox" class="ca-partner-check" data-name="${nm}"${c.partner ? " checked" : ""}> 🤝 partner</label>` +
+        colorEditor(c) +
         `<span class="ca-status-actions">${statusControls(c)}</span>` +
       `</div>` +
     `</li>`;
@@ -1683,6 +1814,25 @@ function wireCardArt() {
         }
         return;
       }
+      // Color identity: + toggles the picker; a pick adds (or sets colorless); a pip removes.
+      const ccAdd = e.target.closest(".cc-add");
+      if (ccAdd) {
+        const pk = ccAdd.closest(".cc-editor").querySelector(".cc-picker");
+        if (pk) pk.hidden = !pk.hidden;
+        return;
+      }
+      const pick = e.target.closest(".cc-pick");
+      if (pick) {
+        const { name, color } = pick.dataset;
+        setCardColors(name, color === "" ? "" : normalizeColors(currentColorsFor(name) + color));
+        return;
+      }
+      const pip = e.target.closest("button.cc-pip");   // colorless ◇ is a <span> → ignored
+      if (pip) {
+        const { name, color } = pip.dataset;
+        setCardColors(name, currentColorsFor(name).split("").filter((ch) => ch !== color).join(""));
+        return;
+      }
       const face = e.target.closest(".ca-face");
       if (!face) return;
       const { name, face: f } = face.dataset;
@@ -1746,20 +1896,30 @@ function wireCardArt() {
 function refreshAdminUI() {
   const owner = adminOwnerKey;
   isAdmin = !!(currentUser && owner && currentUser.key === owner);
+  const setDisp = (id, d) => { const el = $(id); if (el) el.style.display = d; };
 
-  // The owner can minimize the tools to a small chip; the chip itself stays
-  // visible so they can bring the tools back. State is remembered per-browser.
+  // Wheel page: the only admin-related DOM is the header link to admin.html.
+  setDisp("adminNav", isAdmin ? "inline-flex" : "none");
+
+  // Admin page: the owner can minimize the tools to a small chip; the chip itself
+  // stays visible so they can bring them back. State is remembered per-browser.
   const showTools = isAdmin && !adminCollapsed;
   const toggle = $("adminToggle");
-  toggle.style.display = isAdmin ? "inline-flex" : "none";
-  toggle.setAttribute("aria-expanded", String(showTools));
-  toggle.textContent = showTools ? "🔧 Admin ▾" : "🔧 Admin ▸";
-  $("adminBar").style.display = showTools ? "flex" : "none";
-  $("adminPanel").style.display = showTools ? "block" : "none";
-  $("cardArtPanel").style.display = showTools ? "block" : "none";
+  if (toggle) {
+    toggle.style.display = isAdmin ? "inline-flex" : "none";
+    toggle.setAttribute("aria-expanded", String(showTools));
+    toggle.textContent = showTools ? "🔧 Admin ▾" : "🔧 Admin ▸";
+  }
+  const toolDisp = showTools ? "block" : "none";
+  setDisp("adminBar", showTools ? "flex" : "none");
+  setDisp("adminPanel", toolDisp);
+  setDisp("cardArtPanel", toolDisp);
+  setDisp("densityPanel", toolDisp);
 
-  const canClaim = location.hash === "#admin" && !owner;
-  $("adminClaim").style.display = canClaim ? "flex" : "none";
+  // Claiming now lives on admin.html (its presence gates the claim UI); the
+  // create-only rule still prevents a leaked link from seizing ownership.
+  const canClaim = !owner && !!$("adminClaim");
+  setDisp("adminClaim", canClaim ? "flex" : "none");
   if (canClaim) {
     $("claimMsg").textContent = currentUser
       ? `Make “${currentUser.username}” the permanent admin for this app.`
@@ -1768,8 +1928,8 @@ function refreshAdminUI() {
   }
 
   if (isAdmin) { populateManualOptions(); refreshUserList(); }
-  if (showTools) renderCardArtGrid();
-  renderResults();   // reflect re-roll / remove buttons
+  if (showTools) { renderCardArtGrid(); renderDensity(); }
+  renderResults();   // reflect re-roll / remove buttons (wheel page)
 }
 
 // One-time claim: writes the owner only if none exists yet (create-only, both
@@ -1789,46 +1949,61 @@ async function claimAdmin() {
 }
 
 // ───────────────────────────── Boot ───────────────────────────────
+// app.js is loaded by BOTH the wheel page (index.html, data-page="wheel") and the
+// admin page (admin.html, data-page="admin"). Firebase init, subscriptions, auth,
+// and the rebuild/render chain run on both; only the page-specific wiring differs.
 function boot() {
-  wheel = new Wheel($("wheel"));
+  const page = (document.body && document.body.dataset.page) || "wheel";
   try { adminCollapsed = localStorage.getItem(LS_ADMIN_COLLAPSED) === "1"; } catch { /* ignore */ }
   restoreSession();
-  buildMainWheel();
-  renderStats();
-  renderResults();
-  $("spinBtn").addEventListener("click", () => {
-    if (wheel.spinning) return;
-    if (phase === "main") { guestSeq = false; scope = "personal"; }
-    onSpin();
-  });
-  $("guestBtn").addEventListener("click", () => {
-    if (wheel.spinning || phase !== "main") return;
-    guestSeq = true; scope = "all";   // roll across every commander, even claimed ones
-    onSpin();
-  });
-  $("loginBtn").addEventListener("click", login);
-  $("registerBtn").addEventListener("click", register);
-  $("logoutBtn").addEventListener("click", logout);
-  $("authUser").addEventListener("keydown", (e) => { if (e.key === "Enter") $("authPass").focus(); });
-  $("authPass").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
-  $("results").addEventListener("click", (e) => {
-    const rb = e.target.closest(".reroll-btn");
-    if (rb) { reRoll(rb.dataset.key); return; }
-    const xb = e.target.closest(".remove-btn");
-    if (xb) removeAssignment(xb.dataset.key);
-  });
-  wireAdmin();
+
+  // Wheel page only: the spinner, guest roll, and results list.
+  if (page === "wheel") {
+    wheel = new Wheel($("wheel"));
+    buildMainWheel();
+    renderStats();
+    renderResults();
+    $("spinBtn").addEventListener("click", () => {
+      if (wheel.spinning) return;
+      if (phase === "main") { guestSeq = false; scope = "personal"; }
+      onSpin();
+    });
+    $("guestBtn").addEventListener("click", () => {
+      if (wheel.spinning || phase !== "main") return;
+      guestSeq = true; scope = "all";   // roll across every commander, even claimed ones
+      onSpin();
+    });
+    $("results").addEventListener("click", (e) => {
+      const rb = e.target.closest(".reroll-btn");
+      if (rb) { reRoll(rb.dataset.key); return; }
+      const xb = e.target.closest(".remove-btn");
+      if (xb) removeAssignment(xb.dataset.key);
+    });
+  }
+
+  // Auth lives on both pages (same element IDs); guard each in case a page omits one.
+  if ($("loginBtn")) $("loginBtn").addEventListener("click", login);
+  if ($("registerBtn")) $("registerBtn").addEventListener("click", register);
+  if ($("logoutBtn")) $("logoutBtn").addEventListener("click", logout);
+  if ($("authUser")) $("authUser").addEventListener("keydown", (e) => { if (e.key === "Enter") $("authPass").focus(); });
+  if ($("authPass")) $("authPass").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+
+  // Admin page only: the admin tools (their DOM lives only on admin.html).
+  if (page === "admin") wireAdmin();
+
   const configured = initFirebase();
-  // Local-preview mode (no Firebase): the owner + card-art overrides live in
+  // Local-preview mode (no Firebase): the owner + card overrides live in
   // localStorage so the admin tools are still testable.
   if (!configured) {
     try { adminOwnerKey = localStorage.getItem(LS_ADMIN) || null; } catch { /* ignore */ }
     // Seed the mirrors, then a single rebuild so custom cards + partner flips
-    // + staged roster status all show.
+    // + staged roster status + colors all show.
     cardImageOverrides = readLocalCardImages();
     cardImageStaged = readLocalCardImageStaged();
     cardMetaOverrides = readLocalCardMeta();
     cardStatusOverrides = readLocalCardStatus();
+    cardColorOverrides = readLocalCardColors();
+    poolChangeOverrides = readLocalPoolChanges();
     applyCustomCards(readLocalCustomCards());
   }
   window.addEventListener("hashchange", refreshAdminUI);

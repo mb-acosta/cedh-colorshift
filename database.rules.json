@@ -92,6 +92,27 @@
         "by": { ".validate": "newData.isString()" },
         "$other": { ".validate": false }
       }
+    },
+    "cardColors": {
+      ".read": true,
+      ".write": true,
+      "$key": {
+        ".validate": "newData.hasChild('colors')",
+        "colors": { ".validate": "newData.isString() && newData.val().matches(/^(W?U?B?R?G?)$/)" },
+        "ts": { ".validate": "newData.isNumber()" },
+        "by": { ".validate": "newData.isString()" },
+        "$other": { ".validate": false }
+      }
+    },
+    "poolChanges": {
+      ".read": true,
+      ".write": true,
+      "$key": {
+        ".validate": "newData.hasChild('kind')",
+        "kind": { ".validate": "newData.isString() && newData.val().matches(/^(added|updated)$/)" },
+        "ts": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
     }
   }
 }

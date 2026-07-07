@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Commander Wheel — Admin</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>" />
+</head>
+<body data-page="admin">
+  <header>
+    <h1>🔧 Commander Wheel — Admin</h1>
+    <div class="header-right">
+      <a class="nav-link" href="index.html">← Wheel</a>
+      <a class="nav-link" href="gallery.html">📖 Card reference</a>
+      <div id="status" class="status">connecting…</div>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <p class="admin-hint">Admin tools. Log in as the owner account to manage the pool. These tools are for the admin only.</p>
+
+    <div class="auth-row">
+      <div id="authLoggedOut" class="auth-form">
+        <input id="authUser" type="text" placeholder="Discord username" autocomplete="off" maxlength="40" />
+        <input id="authPass" type="password" placeholder="Password" autocomplete="current-password" maxlength="100" />
+        <button id="loginBtn">Log in</button>
+        <button id="registerBtn" class="secondary">Register</button>
+        <label class="remember"><input id="authRemember" type="checkbox" checked /> Remember me</label>
+      </div>
+      <div id="authLoggedIn" class="auth-logged-in" style="display:none">
+        <span>Logged in as <b id="whoami"></b></span>
+        <button id="logoutBtn" class="secondary">Log out</button>
+      </div>
+      <div id="authMsg" class="auth-msg"></div>
+    </div>
+
+    <div id="adminClaim" class="admin-claim" style="display:none">
+      <span>🔐 <span id="claimMsg"></span></span>
+      <button id="claimBtn">Make this account the admin</button>
+    </div>
+
+    <button id="adminToggle" class="admin-toggle" type="button" style="display:none"
+            title="Show or hide the admin tools" aria-expanded="true">🔧 Admin</button>
+
+    <div id="adminBar" class="admin-bar" style="display:none">
+      <span>🔧 Admin mode</span>
+      <button id="storeResetBtn">📦 Store event &amp; reset pool</button>
+      <button id="resetBtn" class="danger">Reset all assignments</button>
+    </div>
+
+    <div id="densityPanel" class="admin-panel cc-density-panel" style="display:none">
+      <h3>Color-identity density</h3>
+      <p class="admin-hint">How many live commanders include each color — a UBR commander counts toward blue, black, and red. Tag identities on each card below (the <b>+</b> next to a card), then use this to balance the pool.</p>
+      <div id="ccDensity" class="cc-density"></div>
+    </div>
+
+    <div id="adminPanel" class="admin-panel" style="display:none">
+      <h3>Manually assign a commander</h3>
+      <div class="manual-form">
+        <input id="maUser" list="userList" placeholder="Discord username" autocomplete="off" maxlength="40" />
+        <datalist id="userList"></datalist>
+        <select id="maType">
+          <option value="single">Single</option>
+          <option value="partner">Partner pair</option>
+        </select>
+        <select id="maA"></select>
+        <select id="maB" style="display:none"></select>
+        <button id="maAssignBtn">Assign</button>
+      </div>
+      <div id="maMsg" class="auth-msg"></div>
+      <p class="admin-hint">“Store event &amp; reset” keeps every result, then refills the pool — players just can’t re-roll the exact result they already got. Use the <b>↻</b> button on a result to let someone spin again.</p>
+    </div>
+
+    <div id="cardArtPanel" class="admin-panel card-art-panel" style="display:none">
+      <h3>Card art &amp; colors</h3>
+      <p class="admin-hint">Re-point a card at a different Google Drive image without a redeploy — drop a Drive link on a face or paste its link/ID. <b>Set now</b> goes live for everyone immediately; <b>⏳ Stage</b> holds the new art (admin-only preview) until the next “Store event &amp; reset pool”, then publishes it. Use the <b>+</b> in each card to tag its color identity. Cards must be shared “Anyone with the link”.</p>
+
+      <details class="ca-bulk ca-add">
+        <summary>Add a single card</summary>
+        <div class="ca-bulk-body">
+          <p class="admin-hint">Add a brand-new commander to the pool. It appears on the wheel and reference page for everyone — unless you tick <b>Future upload</b>, which stages it (admin-only) until the next “Store event &amp; reset pool”. Cards must be shared “Anyone with the link”.</p>
+          <div class="ca-add-grid">
+            <label class="ca-add-field">
+              <span>Card name</span>
+              <input id="caNewName" type="text" placeholder="e.g. Sakashima of a Thousand Faces" autocomplete="off" />
+            </label>
+            <label class="ca-add-field">
+              <span>Front image (Drive link or ID)</span>
+              <input id="caNewImg" type="text" placeholder="Drive share link or file ID" autocomplete="off" />
+            </label>
+          </div>
+          <div class="ca-add-toggles">
+            <label class="ca-toggle"><input id="caNew2Faces" type="checkbox" /> Two faces (flip / MDFC)</label>
+            <label class="ca-toggle"><input id="caNewPartner" type="checkbox" /> 🤝 Partner-eligible</label>
+            <label class="ca-toggle"><input id="caNewFuture" type="checkbox" /> ⏳ Future upload (stage until next Store event)</label>
+          </div>
+          <div id="caNewBackWrap" class="ca-add-grid" style="display:none">
+            <label class="ca-add-field">
+              <span>Back name (optional)</span>
+              <input id="caNewBackName" type="text" placeholder="Back-face name" autocomplete="off" />
+            </label>
+            <label class="ca-add-field">
+              <span>Back image (Drive link or ID)</span>
+              <input id="caNewBackImg" type="text" placeholder="Drive share link or file ID" autocomplete="off" />
+            </label>
+          </div>
+          <button id="caAddBtn" type="button">Add card</button>
+        </div>
+      </details>
+
+      <details class="ca-bulk">
+        <summary>Bulk import from the new Drive folder</summary>
+        <div class="ca-bulk-body">
+          <div class="ca-bulk-row">
+            <input id="caFolder" type="text" placeholder="New Drive folder link or ID" autocomplete="off" />
+            <button id="caScanBtn" type="button">Scan folder</button>
+          </div>
+          <p class="admin-hint">Folder scan needs the Google Drive API enabled on the project and the folder shared publicly. If it doesn’t list, paste a mapping instead:</p>
+          <textarea id="caPaste" rows="4" placeholder="One per line:  Commander Name, driveIdOrLink&#10;…or paste JSON: { &quot;Commander Name&quot;: &quot;driveId&quot; }"></textarea>
+          <button id="caParseBtn" type="button">Match pasted list</button>
+          <div id="caReview" class="ca-review"></div>
+        </div>
+      </details>
+
+      <div class="ca-search-row">
+        <input id="caSearch" type="search" placeholder="Filter cards…" autocomplete="off" />
+        <span class="admin-hint"><span id="caCount">0</span> cards</span>
+      </div>
+      <ul id="caGrid" class="ca-grid"></ul>
+      <div id="caMsg" class="auth-msg"></div>
+    </div>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
