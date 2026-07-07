@@ -24,6 +24,7 @@ const encKey = (s) => encodeURIComponent(String(s)).replace(/\./g, "%2E");
 // A player's stable identity = lowercased Discord name (must match userKey() in app.js).
 const userKey = (s) => encKey(String(s).trim().toLowerCase());
 const WUBRG = ["W", "U", "B", "R", "G"];
+const COLOR_NAME = { W: "White", U: "Blue", B: "Black", R: "Red", G: "Green", C: "Colorless" };
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (m) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -33,13 +34,17 @@ function face(id, alt) {
   return `<img class="g-card" src="${driveImg(id)}" alt="${escapeHtml(alt)}" ` +
     `loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('broken')">`;
 }
-// Color-identity pips (read-only): letters in colored circles; ◇ = colorless.
-// null/undefined (untagged) renders nothing. Reuses the admin .cc-pip palette.
+// A real MTG mana symbol (mana-font). "" or "C" → colorless.
+function manaSym(L) {
+  const c = String(L || "C").toUpperCase();
+  return `<i class="ms ms-${c.toLowerCase()} ms-cost" title="${COLOR_NAME[c] || c}" aria-hidden="true"></i>`;
+}
+// Color-identity pips (read-only), as authentic mana symbols. null/undefined
+// (untagged) renders nothing; "" renders the colorless symbol.
 function colorPipsHtml(colors) {
   if (colors == null) return "";
-  if (colors === "") return `<span class="cc-pip cc-c" title="Colorless">◇</span>`;
-  return `<span class="cc-pips">` + colors.split("").map((L) =>
-    `<span class="cc-pip cc-${L}" title="${L}">${L}</span>`).join("") + `</span>`;
+  if (colors === "") return `<span class="cc-pips">${manaSym("")}</span>`;
+  return `<span class="cc-pips">` + colors.split("").map((L) => manaSym(L)).join("") + `</span>`;
 }
 
 const grid = document.getElementById("gallery");

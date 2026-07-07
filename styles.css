@@ -402,19 +402,17 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 .admin-main { display: block; max-width: none; margin: 0; padding: 16px clamp(14px, 3vw, 40px) 60px; }
 .admin-main .auth-row { margin-bottom: 14px; }
 
-/* ── Color identity: shared pips (admin editor, gallery, filter chips) ── */
-.cc-pips { display: inline-flex; gap: 3px; vertical-align: middle; flex-wrap: wrap; }
-.cc-pip { width: 20px; height: 20px; border-radius: 999px; font-size: .7rem; font-weight: 800;
-  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
-  border: 1px solid rgba(0,0,0,.28); }
-.cc-pip.cc-W { background: #f4efd3; color: #3a3520; }
-.cc-pip.cc-U { background: #2f9fe0; color: #04283f; }
-.cc-pip.cc-B { background: #4a4650; color: #e8e3df; }
-.cc-pip.cc-R { background: #e0574b; color: #3a0d08; }
-.cc-pip.cc-G { background: #49af74; color: #08301a; }
-.cc-pip.cc-c { background: transparent; color: var(--muted); border-color: rgba(255,255,255,.28); }
-button.cc-pip { cursor: pointer; }
+/* ── Color identity: authentic mana-symbol pips (mana-font) ── */
+/* The .ms-cost glyph is a self-contained colored badge, so pips/picks/filter
+   chips are bare buttons sized by font-size around the icon. */
+.cc-pips { display: inline-flex; gap: 3px; vertical-align: middle; align-items: center; flex-wrap: wrap; }
+.cc-pips .ms-cost { font-size: 15px; }
+.cc-pip, .cc-pick { background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  display: inline-flex; align-items: center; line-height: 1; border-radius: 999px; }
+.cc-pip .ms-cost, .cc-pick .ms-cost { font-size: 19px; }
 button.cc-pip:hover { outline: 2px solid var(--err); outline-offset: 1px; }
+.cc-pick:hover { outline: 2px solid var(--gold); outline-offset: 1px; }
+.filter-chip .ms-cost { font-size: 15px; }
 
 /* Admin per-card color editor (in .ca-meta) */
 .cc-editor { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -422,31 +420,23 @@ button.cc-pip:hover { outline: 2px solid var(--err); outline-offset: 1px; }
 .cc-add { width: 22px; height: 22px; border-radius: 999px; cursor: pointer; font-size: .9rem; line-height: 1;
   background: var(--panel2); color: var(--ink); border: 1px solid rgba(255,255,255,.2); }
 .cc-add:hover { border-color: var(--gold); }
-.cc-picker { display: inline-flex; gap: 4px; }
+.cc-picker { display: inline-flex; gap: 4px; align-items: center; }
 .cc-picker[hidden] { display: none; }
-.cc-pick { width: 22px; height: 22px; border-radius: 999px; font-size: .72rem; font-weight: 800; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(0,0,0,.28); }
-.cc-pick.cc-W { background: #f4efd3; color: #3a3520; }
-.cc-pick.cc-U { background: #2f9fe0; color: #04283f; }
-.cc-pick.cc-B { background: #4a4650; color: #e8e3df; }
-.cc-pick.cc-R { background: #e0574b; color: #3a0d08; }
-.cc-pick.cc-G { background: #49af74; color: #08301a; }
-.cc-pick.cc-c { background: transparent; color: var(--muted); border-color: rgba(255,255,255,.28); }
 
 /* Color-identity density tracker (admin page) */
 .cc-density-panel h3 { margin-top: 0; }
 .cc-density { display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
-.cc-den-row { display: grid; grid-template-columns: 16px 64px 1fr 90px; align-items: center; gap: 10px; }
-.cc-den-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,.3); }
+.cc-den-row { display: grid; grid-template-columns: 24px 64px 1fr 90px; align-items: center; gap: 10px; }
+.cc-den-sym .ms-cost { font-size: 18px; }
 .cc-den-name { color: var(--ink); font-size: .86rem; }
 .cc-den-track { height: 10px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
 .cc-den-fill { height: 100%; }
-.cc-den-swatch.cc-W, .cc-den-fill.cc-W { background: #f4efd3; }
-.cc-den-swatch.cc-U, .cc-den-fill.cc-U { background: #2f9fe0; }
-.cc-den-swatch.cc-B, .cc-den-fill.cc-B { background: #4a4650; }
-.cc-den-swatch.cc-R, .cc-den-fill.cc-R { background: #e0574b; }
-.cc-den-swatch.cc-G, .cc-den-fill.cc-G { background: #49af74; }
-.cc-den-swatch.cc-c, .cc-den-fill.cc-c { background: #b9c2cc; }
+.cc-den-fill.cc-W { background: #f4efd3; }
+.cc-den-fill.cc-U { background: #2f9fe0; }
+.cc-den-fill.cc-B { background: #4a4650; }
+.cc-den-fill.cc-R { background: #e0574b; }
+.cc-den-fill.cc-G { background: #49af74; }
+.cc-den-fill.cc-c { background: #b9c2cc; }
 .cc-den-val { color: var(--muted); font-size: .8rem; text-align: right; }
 .cc-den-total { color: var(--muted); font-size: .82rem; margin-top: 6px; }
 

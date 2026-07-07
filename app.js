@@ -1287,6 +1287,16 @@ async function setPartnerFlag(name, on) {
 // this is a color-SHIFTED league, official/Scryfall colors don't apply — the
 // admin declares each card's identity, one color at a time.
 const WUBRG = ["W", "U", "B", "R", "G"];
+const COLOR_NAME = { W: "White", U: "Blue", B: "Black", R: "Red", G: "Green", C: "Colorless" };
+// A real MTG mana symbol (mana-font). "" or "C" → colorless. ms-cost draws the
+// colored circular badge; the glyph is the authentic pip icon.
+function manaSym(L) {
+  const c = (String(L || "C").toUpperCase());
+  return `<i class="ms ms-${c.toLowerCase()} ms-cost" title="${COLOR_NAME[c] || c}" aria-hidden="true"></i>`;
+}
+// Which card's color picker is open (kept across grid re-renders so you can
+// multi-select in one go; cleared when you click away — see wireCardArt).
+let ccOpenFor = null;
 // Canonicalize any input to a deduped, WUBRG-ordered string of valid letters.
 function normalizeColors(input) {
   const have = new Set(String(input || "").toUpperCase().split("").filter((ch) => WUBRG.includes(ch)));
@@ -1298,18 +1308,22 @@ function currentColorsFor(name) {
   return (col && typeof col.colors === "string") ? col.colors : "";
 }
 // Write a card's color identity (mirrors setPartnerFlag). Empty string = colorless.
+// Updates the local mirror + re-renders immediately (optimistic) so rapid
+// multi-select reads the latest value and the pips/density update with no lag;
+// the Firebase echo just confirms it.
 async function setCardColors(name, colors) {
   const enc = encKey(name);
   const norm = normalizeColors(colors);
   const ts = Date.now(), by = byName();
+  cardColorOverrides = { ...cardColorOverrides, [enc]: { colors: norm, ts, by } };
+  onCardDataChanged();
   try {
     if (db) {
       await update(ref(db, "cardColors/" + enc), { colors: norm, ts, by });
     } else {
       const store = readLocalCardColors();
-      store[enc] = { ...(store[enc] || {}), colors: norm, ts, by };
+      store[enc] = { colors: norm, ts, by };
       writeLocalCardColors(store);
-      applyCardColors(store);
     }
     setCaMsg(`${name} identity: ${norm || "colorless"}.`, "ok");
   } catch (e) { setCaMsg("Color update failed: " + e.message + " (publish database.rules.json?)", "err"); }
@@ -1485,25 +1499,27 @@ function statusControls(c) {
   return btn("schedule", "⏳ Schedule removal") + (c.custom ? btn("discard", "✕ Remove", "danger") : "");
 }
 
-// Color-identity editor (admin grid). Current colors show as chips: WUBRG letters
-// are removable buttons, colorless is a static ◇. The + reveals a picker that adds
-// one color at a time (color-shifted league → the admin declares each identity).
+// Color-identity editor (admin grid). Current colors show as mana-symbol chips:
+// WUBRG symbols are removable buttons, colorless is a static ◇ symbol. The +
+// reveals a picker that adds one color at a time; the picker stays open (so you
+// can multi-select) until you click away (see wireCardArt).
 function colorPips(c) {
   if (c.colors == null) return `<span class="cc-untagged">untagged</span>`;
-  if (c.colors === "") return `<span class="cc-pip cc-c" title="Colorless">◇</span>`;
+  if (c.colors === "") return `<span class="cc-pip">${manaSym("")}</span>`;
   return c.colors.split("").map((L) =>
-    `<button class="cc-pip cc-${L}" type="button" data-name="${escapeHtml(c.name)}" data-color="${L}" title="Remove ${L}">${L}</button>`
+    `<button class="cc-pip" type="button" data-name="${escapeHtml(c.name)}" data-color="${L}" title="Remove ${COLOR_NAME[L]}">${manaSym(L)}</button>`
   ).join("");
 }
 function colorEditor(c) {
   const nm = escapeHtml(c.name);
+  const open = c.name === ccOpenFor;
   const picks = WUBRG.map((L) =>
-    `<button class="cc-pick cc-${L}" type="button" data-name="${nm}" data-color="${L}" title="${L}">${L}</button>`).join("") +
-    `<button class="cc-pick cc-c" type="button" data-name="${nm}" data-color="" title="Colorless">◇</button>`;
+    `<button class="cc-pick" type="button" data-name="${nm}" data-color="${L}" title="${COLOR_NAME[L]}">${manaSym(L)}</button>`).join("") +
+    `<button class="cc-pick" type="button" data-name="${nm}" data-color="" title="Colorless">${manaSym("")}</button>`;
   return `<div class="cc-editor" data-name="${nm}">` +
     `<span class="cc-pips">${colorPips(c)}</span>` +
     `<button class="cc-add" type="button" title="Add a color to this identity">+</button>` +
-    `<span class="cc-picker" hidden>${picks}</span>` +
+    `<span class="cc-picker"${open ? "" : " hidden"}>${picks}</span>` +
   `</div>`;
 }
 
@@ -1524,7 +1540,7 @@ function renderDensity() {
   const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
   const bar = (label, n, cls) =>
     `<div class="cc-den-row">` +
-      `<span class="cc-den-swatch cc-${cls}"></span>` +
+      `<span class="cc-den-sym">${manaSym(cls === "c" ? "" : cls)}</span>` +
       `<span class="cc-den-name">${label}</span>` +
       `<div class="cc-den-track"><div class="cc-den-fill cc-${cls}" style="width:${pct(n)}%"></div></div>` +
       `<span class="cc-den-val">${n} · ${pct(n)}%</span>` +
@@ -1539,6 +1555,7 @@ function renderDensity() {
 function renderCardArtGrid() {
   const grid = $("caGrid");
   if (!grid) return;
+  const prevScroll = grid.scrollTop;   // preserve position so multi-select doesn't jump
   const q = (($("caSearch") && $("caSearch").value) || "").trim().toLowerCase();
   const sorted = [...COMMANDERS].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const shown = q
@@ -1561,6 +1578,7 @@ function renderCardArtGrid() {
       `</div>` +
     `</li>`;
   }).join("");
+  grid.scrollTop = prevScroll;
 }
 
 // ── Bulk import: matching ──
@@ -1808,11 +1826,16 @@ function wireCardArt() {
         }
         return;
       }
-      // Color identity: + toggles the picker; a pick adds (or sets colorless); a pip removes.
+      // Color identity: + toggles the picker (which stays open across picks so you
+      // can multi-select); a pick adds (or sets colorless); a pip removes.
       const ccAdd = e.target.closest(".cc-add");
       if (ccAdd) {
-        const pk = ccAdd.closest(".cc-editor").querySelector(".cc-picker");
-        if (pk) pk.hidden = !pk.hidden;
+        const ed = ccAdd.closest(".cc-editor");
+        const name = ed.dataset.name;
+        const opening = ccOpenFor !== name;
+        ccOpenFor = opening ? name : null;
+        grid.querySelectorAll(".cc-picker").forEach((p) => { p.hidden = true; });   // one picker at a time
+        if (opening) { const pk = ed.querySelector(".cc-picker"); if (pk) pk.hidden = false; }
         return;
       }
       const pick = e.target.closest(".cc-pick");
@@ -1872,6 +1895,13 @@ function wireCardArt() {
       const dt = e.dataTransfer;
       const data = (dt.getData("text/uri-list") || dt.getData("text/plain") || "").trim();
       setFaceOverride(face.dataset.name, face.dataset.face, data);
+    });
+    // Click anywhere outside an open color editor closes its picker (clicks inside
+    // it — the +, a pick, a pip — keep it open so you can multi-select in one go).
+    document.addEventListener("click", (e) => {
+      if (!ccOpenFor || e.target.closest(".cc-editor")) return;
+      ccOpenFor = null;
+      grid.querySelectorAll(".cc-picker").forEach((p) => { p.hidden = true; });
     });
   }
   if ($("caSearch")) $("caSearch").addEventListener("input", renderCardArtGrid);
