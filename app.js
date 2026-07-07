@@ -156,7 +156,7 @@ function applyCardImages(snap)  { cardImageOverrides = snap || {}; onCardDataCha
 // refreshes the card-art grid rather than rebuilding the wheel.
 function applyCardImageStaged(snap) {
   cardImageStaged = snap || {};
-  if (isAdmin && !adminCollapsed && typeof renderCardArtGrid === "function") renderCardArtGrid();
+  if (isAdmin && typeof renderCardArtGrid === "function") renderCardArtGrid();
 }
 function applyCardMeta(snap)    { cardMetaOverrides = snap || {}; onCardDataChanged(); }
 function applyCustomCards(snap) { customCards = snap || {}; onCardDataChanged(); }
@@ -179,7 +179,7 @@ function onCardDataChanged() {
   if (typeof updateSpinButton === "function" && wheel && !wheel.spinning) updateSpinButton();
   if (isAdmin) {
     populateManualOptions();
-    if (!adminCollapsed) { renderCardArtGrid(); renderDensity(); }
+    renderCardArtGrid(); renderDensity();
   }
 }
 
@@ -204,9 +204,7 @@ let scope = "personal";          // "personal" = exclude my past results too; "a
 let adminOwnerKey = null;        // userKey of the admin account (null = unclaimed)
 let adminWired = false;          // admin button listeners attached only once
 let registeredKeys = new Set();  // userKeys that have a registered account (loaded in admin)
-let adminCollapsed = false;      // admin tools minimized to a chip (persisted per-browser)
 const LS_ADMIN = "cw_admin_owner"; // local-preview fallback store
-const LS_ADMIN_COLLAPSED = "cw_admin_collapsed";
 
 function initFirebase() {
   if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "REPLACE_ME") {
@@ -999,7 +997,7 @@ async function storeEventAndReset() {
     writeLocalPoolChanges(pc); poolChangeOverrides = pc;
     rebuildCommanders();
     recomputeUsed(); renderResults(); renderStats(); endSequence();
-    if (isAdmin) { populateManualOptions(); if (!adminCollapsed) { renderCardArtGrid(); renderDensity(); } }
+    if (isAdmin) { populateManualOptions(); renderCardArtGrid(); renderDensity(); }
     return;
   }
 
@@ -1551,7 +1549,8 @@ function renderCardArtGrid() {
     const hasBack = !!(ORIGINAL_ART.get(c.name).backImg || c.back);
     const nm = escapeHtml(c.name);
     const stCls = c.status ? ` st-${c.status}` : "";
-    return `<li class="ca-item${c.custom ? " custom" : ""}${stCls}">` +
+    // Flip cards span 2 grid columns (two faces → counts as 2 cards), like the reference page.
+    return `<li class="ca-item${hasBack ? " flip" : ""}${c.custom ? " custom" : ""}${stCls}">` +
       `<div class="ca-faces">${faceTile(c, "img")}${hasBack ? faceTile(c, "backImg") : ""}</div>` +
       `<div class="ca-name">${nm}${c.back ? `<span class="ca-flip">// ${escapeHtml(c.back)}</span>` : ""}` +
         `${c.custom ? ` <span class="ca-custom-tag">added</span>` : ""}${statusTag(c)}</div>` +
@@ -1780,11 +1779,6 @@ function wireAdmin() {
   if (adminWired) return;
   adminWired = true;
   $("claimBtn").addEventListener("click", claimAdmin);
-  $("adminToggle").addEventListener("click", () => {
-    adminCollapsed = !adminCollapsed;
-    try { localStorage.setItem(LS_ADMIN_COLLAPSED, adminCollapsed ? "1" : "0"); } catch { /* ignore */ }
-    refreshAdminUI();
-  });
   $("resetBtn").addEventListener("click", async () => {
     if (!confirm("Clear ALL assignments for this event? This cannot be undone. (Use 'Store event & reset' if you want to keep results.)")) return;
     if (!firebaseReady) { assignments = {}; recomputeUsed(); renderResults(); renderStats(); endSequence(); populateManualOptions(); return; }
@@ -1901,20 +1895,13 @@ function refreshAdminUI() {
   // Wheel page: the only admin-related DOM is the header link to admin.html.
   setDisp("adminNav", isAdmin ? "inline-flex" : "none");
 
-  // Admin page: the owner can minimize the tools to a small chip; the chip itself
-  // stays visible so they can bring them back. State is remembered per-browser.
-  const showTools = isAdmin && !adminCollapsed;
-  const toggle = $("adminToggle");
-  if (toggle) {
-    toggle.style.display = isAdmin ? "inline-flex" : "none";
-    toggle.setAttribute("aria-expanded", String(showTools));
-    toggle.textContent = showTools ? "🔧 Admin ▾" : "🔧 Admin ▸";
-  }
-  const toolDisp = showTools ? "block" : "none";
+  // Admin page: it's a dedicated page, so the owner sees every tool at once —
+  // no collapse chip. (These setDisp calls no-op on the wheel page.)
+  const showTools = isAdmin;
   setDisp("adminBar", showTools ? "flex" : "none");
-  setDisp("adminPanel", toolDisp);
-  setDisp("cardArtPanel", toolDisp);
-  setDisp("densityPanel", toolDisp);
+  setDisp("adminPanel", showTools ? "block" : "none");
+  setDisp("cardArtPanel", showTools ? "block" : "none");
+  setDisp("densityPanel", showTools ? "block" : "none");
 
   // Claiming now lives on admin.html (its presence gates the claim UI); the
   // create-only rule still prevents a leaked link from seizing ownership.
@@ -1954,7 +1941,6 @@ async function claimAdmin() {
 // and the rebuild/render chain run on both; only the page-specific wiring differs.
 function boot() {
   const page = (document.body && document.body.dataset.page) || "wheel";
-  try { adminCollapsed = localStorage.getItem(LS_ADMIN_COLLAPSED) === "1"; } catch { /* ignore */ }
   restoreSession();
 
   // Wheel page only: the spinner, guest roll, and results list.

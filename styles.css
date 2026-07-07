@@ -320,9 +320,19 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 
 /* Editable card grid */
 .ca-search-row { display: flex; gap: 10px; align-items: center; margin: 4px 0 10px; }
-.ca-grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); max-height: 78vh; overflow-y: auto; }
-.ca-item { background: var(--panel); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 8px; }
+.ca-grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; align-items: start;
+  grid-template-columns: repeat(2, 1fr); max-height: 78vh; overflow-y: auto; }
+/* Same responsive column steps as the reference gallery (2 → 8); a flip card
+   spans 2 columns so its two faces get a single-card width each, and so it counts
+   as 2 cards toward the per-row max. */
+@media (min-width: 640px)  { .ca-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 960px)  { .ca-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1280px) { .ca-grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 1600px) { .ca-grid { grid-template-columns: repeat(6, 1fr); } }
+@media (min-width: 1920px) { .ca-grid { grid-template-columns: repeat(7, 1fr); } }
+@media (min-width: 2300px) { .ca-grid { grid-template-columns: repeat(8, 1fr); } }
+.ca-item { background: var(--panel); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 8px; min-width: 0; }
+.ca-item.flip { grid-column: span 2; }
 .ca-faces { display: flex; gap: 6px; justify-content: center; }
 .ca-face { flex: 1 1 0; min-width: 0; border: 2px dashed transparent; border-radius: 8px; padding: 4px; text-align: center; }
 .ca-face.drop { border-color: var(--gold); background: rgba(231,193,74,.1); }
@@ -386,7 +396,7 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 .ca-add #caAddBtn { background: var(--gold); color: #1a1500; border: none; }
 
 /* ── Admin page container ── */
-.admin-main { max-width: 1500px; margin: 0 auto; padding: 16px clamp(14px, 3vw, 40px) 60px; }
+.admin-main { max-width: none; margin: 0; padding: 16px clamp(14px, 3vw, 40px) 60px; }
 .admin-main .auth-row { margin-bottom: 14px; }
 
 /* ── Color identity: shared pips (admin editor, gallery, filter chips) ── */
