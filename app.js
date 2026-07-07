@@ -1469,7 +1469,7 @@ async function retireCard(name) {
 // Add a brand-new commander to the pool (request A). Identity + art go to
 // customCards; partner status (if any) goes to cardMeta so this and the grid
 // toggle share one source of truth. Rejects names that already exist.
-async function addCustomCard({ name, back, img, backImg, partner, pending }) {
+async function addCustomCard({ name, back, img, backImg, partner, pending, colors }) {
   name = String(name || "").trim();
   back = String(back || "").trim();
   if (!name) { setCaMsg("Give the card a name.", "err"); return false; }
@@ -1481,6 +1481,9 @@ async function addCustomCard({ name, back, img, backImg, partner, pending }) {
     backId = extractDriveId(backImg);
     if (!backId) { setCaMsg("Back image: paste a Drive share link or file ID (or turn off “two faces”).", "err"); return false; }
   }
+  // colors: a string (incl. "" for colorless) tags the new card's identity; undefined leaves it untagged.
+  const hasColors = typeof colors === "string";
+  const normColors = hasColors ? normalizeColors(colors) : null;
   const enc = encKey(name);
   const ts = Date.now(), by = byName();
   const rec = { name, img: frontId, ts, by };
@@ -1491,11 +1494,13 @@ async function addCustomCard({ name, back, img, backImg, partner, pending }) {
       const updates = { ["customCards/" + enc]: rec };
       if (partner) updates["cardMeta/" + enc] = { partner: true, ts, by };
       if (pending) updates["cardStatus/" + enc] = { state: "pending", ts, by };
+      if (hasColors) updates["cardColors/" + enc] = { colors: normColors, ts, by };
       await update(ref(db), updates);
     } else {
       const cc = readLocalCustomCards(); cc[enc] = rec; writeLocalCustomCards(cc); customCards = cc;
       if (partner) { const m = readLocalCardMeta(); m[enc] = { partner: true, ts, by }; writeLocalCardMeta(m); cardMetaOverrides = m; }
       if (pending) { const s = readLocalCardStatus(); s[enc] = { state: "pending", ts, by }; writeLocalCardStatus(s); cardStatusOverrides = s; }
+      if (hasColors) { const co = readLocalCardColors(); co[enc] = { colors: normColors, ts, by }; writeLocalCardColors(co); cardColorOverrides = co; }
       applyCustomCards(cc);
     }
     setCaMsg(pending ? `Staged “${name}” as a future upload — it goes live for everyone on the next “Store event & reset pool”.` : `Added “${name}”.`, "ok");
@@ -1910,6 +1915,20 @@ function syncNewCardFaces() {
   if (back) back.style.display = on ? "" : "none";
 }
 
+// Read the add-card color picker → "" (colorless), a WUBRG string, or undefined
+// (nothing selected → leave the new card untagged, taggable later in the grid).
+function readNewCardColors() {
+  const box = $("caNewColors");
+  if (!box) return undefined;
+  if (box.querySelector('.ca-cpip[data-color=""].on')) return "";   // colorless picked explicitly
+  const cols = [...box.querySelectorAll(".ca-cpip.on")].map((b) => b.dataset.color).join("");
+  return normalizeColors(cols) || undefined;
+}
+function resetNewCardColors() {
+  const box = $("caNewColors");
+  if (box) box.querySelectorAll(".ca-cpip.on").forEach((b) => b.classList.remove("on"));
+}
+
 async function onAddSingleCard() {
   const twoFaces = $("caNew2Faces") && $("caNew2Faces").checked;
   const ok = await addCustomCard({
@@ -1919,6 +1938,7 @@ async function onAddSingleCard() {
     backImg: twoFaces ? $("caNewBackImg").value : "",
     partner: $("caNewPartner") && $("caNewPartner").checked,
     pending: $("caNewFuture") && $("caNewFuture").checked,
+    colors: readNewCardColors(),
   });
   if (ok) {
     // Clear the form for the next card; keep the panel open on the new grid entry.
@@ -1926,6 +1946,7 @@ async function onAddSingleCard() {
     if ($("caNew2Faces")) $("caNew2Faces").checked = false;
     if ($("caNewPartner")) $("caNewPartner").checked = false;
     if ($("caNewFuture")) $("caNewFuture").checked = false;
+    resetNewCardColors();
     syncNewCardFaces();
     if ($("caSearch")) { $("caSearch").value = ""; renderCardArtGrid(); }
   }
@@ -2108,6 +2129,21 @@ function wireCardArt() {
   // Single-card import (request A).
   if ($("caNew2Faces")) $("caNew2Faces").addEventListener("change", syncNewCardFaces);
   if ($("caAddBtn")) $("caAddBtn").addEventListener("click", onAddSingleCard);
+  // Add-card color-identity picker: WUBRG pips toggle; colorless (◇) is exclusive.
+  if ($("caNewColors")) $("caNewColors").addEventListener("click", (e) => {
+    const pip = e.target.closest(".ca-cpip");
+    if (!pip) return;
+    const box = $("caNewColors");
+    if (pip.dataset.color === "") {   // colorless: clear colors, toggle itself
+      const turningOn = !pip.classList.contains("on");
+      box.querySelectorAll(".ca-cpip").forEach((b) => b.classList.remove("on"));
+      if (turningOn) pip.classList.add("on");
+    } else {                          // a color: clear colorless, toggle this one
+      const cl = box.querySelector('.ca-cpip[data-color=""]');
+      if (cl) cl.classList.remove("on");
+      pip.classList.toggle("on");
+    }
+  });
 }
 
 // Show/hide admin tools based on (logged-in account === claimed owner). #admin
