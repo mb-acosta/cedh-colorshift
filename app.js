@@ -85,6 +85,7 @@ let cardMetaOverrides = {};      // encKey(name) -> { partner: bool }  — partn
 let customCards = {};            // encKey(name) -> { name, back?, img, backImg? }  — admin-added cards
 let cardStatusOverrides = {};    // encKey(name) -> { state, ts?, by? }  — staged roster status (see below)
 let cardColorOverrides = {};     // encKey(name) -> { colors, ts?, by? }  — admin-declared color identity (WUBRG string; "" = colorless)
+let cardColorStaged = {};        // encKey(name) -> { colors, ts?, by? }  — staged "shift to" identity (admin-only, publishes on Store-event)
 let poolChangeOverrides = {};    // encKey(name) -> { kind: "added"|"updated", ts }  — last Store-event's pool changes
 const LS_CARDIMG = "cw_card_images";   // local-preview fallback stores
 const LS_CARDIMG_STAGED = "cw_card_images_staged";
@@ -92,6 +93,7 @@ const LS_CARDMETA = "cw_card_meta";
 const LS_CUSTOMCARDS = "cw_custom_cards";
 const LS_CARDSTATUS = "cw_card_status";
 const LS_CARDCOLORS = "cw_card_colors";
+const LS_CARDCOLORS_STAGED = "cw_card_colors_staged";
 const LS_POOLCHANGES = "cw_pool_changes";
 
 // Pull a Google Drive file (or folder) ID out of a share link, embed URL, or a
@@ -141,6 +143,8 @@ function rebuildCommanders() {
     c.status = (st && typeof st.state === "string") ? st.state : null;   // null = active
     const col = cardColorOverrides[enc];
     c.colors = (col && typeof col.colors === "string") ? col.colors : null;   // null = untagged, "" = colorless
+    const scol = cardColorStaged[enc];
+    c.stagedColors = (scol && typeof scol.colors === "string") ? scol.colors : null;   // staged "shift to" (admin preview)
   }
   // Swap into the live array in place (keep the const binding everyone imports).
   COMMANDERS.length = 0;
@@ -164,6 +168,12 @@ function applyCardStatus(snap)  { cardStatusOverrides = snap || {}; onCardDataCh
 // Color identity drives the admin density tracker (and, via REST, the gallery
 // filters) — a change re-merges c.colors onto the list and refreshes the grid/density.
 function applyCardColors(snap)  { cardColorOverrides = snap || {}; onCardDataChanged(); }
+// Staged "shift to" colors are admin-only preview (players keep the live identity
+// until Store-event), so this only refreshes the admin grid — like staged art.
+function applyCardColorStaged(snap) {
+  cardColorStaged = snap || {};
+  if (isAdmin && typeof renderCardArtGrid === "function") renderCardArtGrid();
+}
 // poolChanges is only read back so a Store-event can clear the previous rotation's
 // markers; nothing on these pages renders from it, so no rebuild is needed.
 function applyPoolChanges(snap) { poolChangeOverrides = snap || {}; }
@@ -276,6 +286,11 @@ function initFirebase() {
       applyCardColors(snap.val());
     }, (err) => {
       console.warn("Card colors unavailable (publish database.rules.json?):", err.message);
+    });
+    onValue(ref(db, "cardColorsStaged"), (snap) => {
+      applyCardColorStaged(snap.val());
+    }, (err) => {
+      console.warn("Staged card colors unavailable (publish database.rules.json?):", err.message);
     });
     onValue(ref(db, "poolChanges"), (snap) => {
       applyPoolChanges(snap.val());
@@ -950,8 +965,11 @@ async function storeEventAndReset() {
   // and/or a back face).
   const stagedArt = Object.entries(cardImageStaged)
     .filter(([, v]) => v && (typeof v.img === "string" || typeof v.backImg === "string"));
-  if (entries.length === 0 && staged.length === 0 && stagedArt.length === 0) {
-    return alert("Nothing to store — no results and no staged roster or art changes.");
+  // Staged color shifts (the "shift to" identity) go live on the same rotation.
+  const stagedShifts = Object.entries(cardColorStaged)
+    .filter(([, v]) => v && typeof v.colors === "string");
+  if (entries.length === 0 && staged.length === 0 && stagedArt.length === 0 && stagedShifts.length === 0) {
+    return alert("Nothing to store — no results and no staged roster, art, or color changes.");
   }
 
   const pendCount = staged.filter(([, s]) => s.state === "pending").length;
@@ -961,6 +979,7 @@ async function storeEventAndReset() {
   if (pendCount) parts.push(`publish ${pendCount} future upload(s)`);
   if (remCount) parts.push(`remove ${remCount} commander(s)`);
   if (stagedArt.length) parts.push(`apply ${stagedArt.length} art change(s)`);
+  if (stagedShifts.length) parts.push(`shift ${stagedShifts.length} color identit${stagedShifts.length === 1 ? "y" : "ies"}`);
   const detail = entries.length
     ? "\n\nAll commanders return to the pool, but each player keeps their stored result and can't roll that exact result again."
     : "";
@@ -990,9 +1009,16 @@ async function storeEventAndReset() {
       writeLocalCardImages(im); cardImageOverrides = im;
       writeLocalCardImageStaged({}); cardImageStaged = {};
     }
+    if (stagedShifts.length) {
+      const co = readLocalCardColors();
+      for (const [enc, v] of stagedShifts) co[enc] = { colors: v.colors, ts, by };
+      writeLocalCardColors(co); cardColorOverrides = co;
+      writeLocalCardColorStaged({}); cardColorStaged = {};
+    }
     // Refresh the added/updated markers for this rotation (replaces the previous set).
     const pc = {};
     for (const [enc] of stagedArt) pc[enc] = { kind: "updated", ts };
+    for (const [enc] of stagedShifts) pc[enc] = { kind: "updated", ts };
     for (const [enc, st] of staged) if (st.state === "pending") pc[enc] = { kind: "added", ts };
     writeLocalPoolChanges(pc); poolChangeOverrides = pc;
     rebuildCommanders();
@@ -1032,11 +1058,16 @@ async function storeEventAndReset() {
     updates[`cardImages/${enc}/by`] = by;
     updates[`cardImagesStaged/${enc}`] = null;                                    // clear the stage
   }
+  for (const [enc, v] of stagedShifts) {
+    updates[`cardColors/${enc}`] = { colors: v.colors, ts, by };                  // shift → live identity
+    updates[`cardColorsStaged/${enc}`] = null;                                    // clear the stage
+  }
   // Refresh the "added/updated" markers players see on the reference page: clear
-  // the previous rotation's, then mark this one's — staged art = updated,
-  // future-upload going live = added (added wins if a card is somehow both).
+  // the previous rotation's, then mark this one's — staged art / color shift =
+  // updated, future-upload going live = added (added wins if a card is both).
   for (const enc of Object.keys(poolChangeOverrides)) updates[`poolChanges/${enc}`] = null;
   for (const [enc] of stagedArt) updates[`poolChanges/${enc}`] = { kind: "updated", ts };
+  for (const [enc] of stagedShifts) updates[`poolChanges/${enc}`] = { kind: "updated", ts };
   for (const [enc, st] of staged) if (st.state === "pending") updates[`poolChanges/${enc}`] = { kind: "added", ts };
   await update(ref(db), updates);
   endSequence();
@@ -1147,6 +1178,8 @@ function readLocalCardStatus() { try { return JSON.parse(localStorage.getItem(LS
 function writeLocalCardStatus(o) { try { localStorage.setItem(LS_CARDSTATUS, JSON.stringify(o)); } catch { /* ignore */ } }
 function readLocalCardColors() { try { return JSON.parse(localStorage.getItem(LS_CARDCOLORS) || "{}") || {}; } catch { return {}; } }
 function writeLocalCardColors(o) { try { localStorage.setItem(LS_CARDCOLORS, JSON.stringify(o)); } catch { /* ignore */ } }
+function readLocalCardColorStaged() { try { return JSON.parse(localStorage.getItem(LS_CARDCOLORS_STAGED) || "{}") || {}; } catch { return {}; } }
+function writeLocalCardColorStaged(o) { try { localStorage.setItem(LS_CARDCOLORS_STAGED, JSON.stringify(o)); } catch { /* ignore */ } }
 function readLocalPoolChanges() { try { return JSON.parse(localStorage.getItem(LS_POOLCHANGES) || "{}") || {}; } catch { return {}; } }
 function writeLocalPoolChanges(o) { try { localStorage.setItem(LS_POOLCHANGES, JSON.stringify(o)); } catch { /* ignore */ } }
 
@@ -1310,6 +1343,9 @@ function detectManaFont() {
 // Which card's color picker is open (kept across grid re-renders so you can
 // multi-select in one go; cleared when you click away — see wireCardArt).
 let ccOpenFor = null;
+// Same, for the "shift to" (staged) picker; and which staged cards are being edited.
+let ccShiftOpenFor = null;
+const shiftEditing = new Set();   // encKey names whose staged shift is expanded for editing
 // Canonicalize any input to a deduped, WUBRG-ordered string of valid letters.
 function normalizeColors(input) {
   const have = new Set(String(input || "").toUpperCase().split("").filter((ch) => WUBRG.includes(ch)));
@@ -1340,6 +1376,44 @@ async function setCardColors(name, colors) {
     }
     setCaMsg(`${name} identity: ${norm || "colorless"}.`, "ok");
   } catch (e) { setCaMsg("Color update failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+
+// ── Staged color shift ("shift to") ──
+// The target identity a card is shifting to, staged in cardColorsStaged/<enc>. It's
+// an admin-only preview (players keep the live identity) and only replaces the live
+// identity on the next Store-event — alongside the staged art. Mirrors setCardColors.
+function currentStagedFor(name) {
+  const col = cardColorStaged[encKey(name)];
+  return (col && typeof col.colors === "string") ? col.colors : "";
+}
+async function setStagedColors(name, colors) {
+  const enc = encKey(name);
+  const norm = normalizeColors(colors);
+  const ts = Date.now(), by = byName();
+  cardColorStaged = { ...cardColorStaged, [enc]: { colors: norm, ts, by } };
+  onCardDataChanged();
+  try {
+    if (db) {
+      await update(ref(db, "cardColorsStaged/" + enc), { colors: norm, ts, by });
+    } else {
+      const store = readLocalCardColorStaged();
+      store[enc] = { colors: norm, ts, by };
+      writeLocalCardColorStaged(store);
+    }
+    setCaMsg(`${name} will shift to ${norm || "colorless"} on the next “Store event & reset pool”.`, "ok");
+  } catch (e) { setCaMsg("Shift update failed: " + e.message + " (publish database.rules.json?)", "err"); }
+}
+// Drop a staged color shift (e.g. cancelling the shift while keeping the card live).
+async function clearStagedShift(name) {
+  const enc = encKey(name);
+  shiftEditing.delete(name); ccShiftOpenFor = null;
+  const del = () => { const s = { ...cardColorStaged }; delete s[enc]; cardColorStaged = s; };
+  del(); onCardDataChanged();
+  try {
+    if (db) await remove(ref(db, "cardColorsStaged/" + enc));
+    else { const store = readLocalCardColorStaged(); delete store[enc]; writeLocalCardColorStaged(store); }
+    setCaMsg(`Cleared the staged shift for ${name}.`, "ok");
+  } catch (e) { setCaMsg("Clear failed: " + e.message, "err"); }
 }
 
 // ── Staged roster status (future upload / future removal) ──
@@ -1536,6 +1610,41 @@ function colorEditor(c) {
   `</div>`;
 }
 
+// Display-only pips (non-interactive) for any colors string. null → hint text.
+function colorPipsDisplay(colors, hint) {
+  if (colors == null) return `<span class="cc-untagged">${hint || "none"}</span>`;
+  if (colors === "") return `<span class="cc-pip">${manaSym("")}</span>`;
+  return colors.split("").map((L) => `<span class="cc-pip">${manaSym(L)}</span>`).join("");
+}
+// Staged "shift to" editor (color-shifted league). Shown only while the card is
+// being modified (.modifying — a new art URL is typed), has a staged shift
+// (.has-shift), or is being edited (.editing) — controlled by CSS + render classes.
+//   full  = "shift to <removable to-pips> + picker"   (while modifying / editing)
+//   badge = "🔀 <from> → <to>  [Edit staging] [✕]"    (staged, collapsed)
+function shiftEditor(c) {
+  const nm = escapeHtml(c.name);
+  const open = c.name === ccShiftOpenFor;
+  const toEdit = (c.stagedColors == null)
+    ? `<span class="cc-untagged">pick colors</span>`
+    : (c.stagedColors === ""
+        ? `<span class="cc-pip">${manaSym("")}</span>`
+        : c.stagedColors.split("").map((L) =>
+            `<button class="cc-shift-pip" type="button" data-name="${nm}" data-color="${L}" title="Remove ${COLOR_NAME[L]}">${manaSym(L)}</button>`).join(""));
+  const picks = WUBRG.map((L) =>
+    `<button class="cc-shift-pick" type="button" data-name="${nm}" data-color="${L}" title="${COLOR_NAME[L]}">${manaSym(L)}</button>`).join("") +
+    `<button class="cc-shift-pick" type="button" data-name="${nm}" data-color="" title="Colorless">${manaSym("")}</button>`;
+  const full = `<span class="cc-shift-full">` +
+      `<span class="cc-shift-label">shift to</span>` +
+      `<span class="cc-shift-to">${toEdit}</span>` +
+      `<button class="cc-shift-add" type="button" title="Set the colors this card shifts to">+</button>` +
+      `<span class="cc-shift-picker"${open ? "" : " hidden"}>${picks}</span>` +
+    `</span>`;
+  const badge = `<span class="cc-shift-badge">🔀 ${colorPipsDisplay(c.colors, "untagged")} → ${colorPipsDisplay(c.stagedColors, "?")} ` +
+      `<button class="cc-shift-editbtn" type="button" data-name="${nm}">Edit staging</button> ` +
+      `<button class="cc-shift-clear" type="button" data-name="${nm}" title="Cancel this shift">✕</button></span>`;
+  return `<div class="cc-shift" data-name="${nm}">${badge}${full}</div>`;
+}
+
 // Color-identity density across the rollable pool (admin balancing tool). A
 // multicolor commander adds to each of its colors; a UBR commander → U, B, R each +1.
 function renderDensity() {
@@ -1569,6 +1678,13 @@ function renderCardArtGrid() {
   const grid = $("caGrid");
   if (!grid) return;
   const prevScroll = grid.scrollTop;   // preserve position so multi-select doesn't jump
+  // Snapshot typed-but-unsaved art URLs so a re-render (e.g. from a color pick)
+  // doesn't wipe them out mid-edit; restored + re-flagged as .modifying below.
+  const inputVals = {};
+  grid.querySelectorAll(".ca-face").forEach((f) => {
+    const inp = f.querySelector(".ca-input");
+    if (inp && inp.value) inputVals[f.dataset.name + "|" + f.dataset.face] = inp.value;
+  });
   const q = (($("caSearch") && $("caSearch").value) || "").trim().toLowerCase();
   const sorted = [...COMMANDERS].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const shown = q
@@ -1579,18 +1695,30 @@ function renderCardArtGrid() {
     const hasBack = !!(ORIGINAL_ART.get(c.name).backImg || c.back);
     const nm = escapeHtml(c.name);
     const stCls = c.status ? ` st-${c.status}` : "";
+    const shiftCls = (c.stagedColors != null ? " has-shift" : "") + (shiftEditing.has(c.name) ? " editing" : "");
     // Flip cards span 2 grid columns (two faces → counts as 2 cards), like the reference page.
-    return `<li class="ca-item${hasBack ? " flip" : ""}${c.custom ? " custom" : ""}${stCls}">` +
+    return `<li class="ca-item${hasBack ? " flip" : ""}${c.custom ? " custom" : ""}${stCls}${shiftCls}">` +
       `<div class="ca-faces">${faceTile(c, "img")}${hasBack ? faceTile(c, "backImg") : ""}</div>` +
       `<div class="ca-name">${nm}${c.back ? `<span class="ca-flip">// ${escapeHtml(c.back)}</span>` : ""}` +
         `${c.custom ? ` <span class="ca-custom-tag">added</span>` : ""}${statusTag(c)}</div>` +
       `<div class="ca-meta">` +
         `<label class="ca-partner"><input type="checkbox" class="ca-partner-check" data-name="${nm}"${c.partner ? " checked" : ""}> 🤝 partner</label>` +
         colorEditor(c) +
+        shiftEditor(c) +
         `<span class="ca-status-actions">${statusControls(c)}</span>` +
       `</div>` +
     `</li>`;
   }).join("");
+  // Restore typed URLs and re-flag tiles that are mid-edit as .modifying.
+  grid.querySelectorAll(".ca-face").forEach((f) => {
+    const inp = f.querySelector(".ca-input");
+    const val = inputVals[f.dataset.name + "|" + f.dataset.face];
+    if (inp && val) inp.value = val;
+  });
+  grid.querySelectorAll(".ca-item").forEach((item) => {
+    const anyVal = [...item.querySelectorAll(".ca-input")].some((i) => i.value.trim() !== "");
+    item.classList.toggle("modifying", anyVal);
+  });
   grid.scrollTop = prevScroll;
 }
 
@@ -1863,6 +1991,39 @@ function wireCardArt() {
         setCardColors(name, currentColorsFor(name).split("").filter((ch) => ch !== color).join(""));
         return;
       }
+      // Staged "shift to" editor: + toggles its picker; a pick adds; a pip removes;
+      // "Edit staging" expands a staged card; ✕ cancels the shift.
+      const shiftAdd = e.target.closest(".cc-shift-add");
+      if (shiftAdd) {
+        const ed = shiftAdd.closest(".cc-shift");
+        const name = ed.dataset.name;
+        const opening = ccShiftOpenFor !== name;
+        ccShiftOpenFor = opening ? name : null;
+        grid.querySelectorAll(".cc-shift-picker").forEach((p) => { p.hidden = true; });
+        if (opening) { const pk = ed.querySelector(".cc-shift-picker"); if (pk) pk.hidden = false; }
+        return;
+      }
+      const shiftPick = e.target.closest(".cc-shift-pick");
+      if (shiftPick) {
+        const { name, color } = shiftPick.dataset;
+        setStagedColors(name, color === "" ? "" : normalizeColors(currentStagedFor(name) + color));
+        return;
+      }
+      const shiftPip = e.target.closest("button.cc-shift-pip");
+      if (shiftPip) {
+        const { name, color } = shiftPip.dataset;
+        setStagedColors(name, currentStagedFor(name).split("").filter((ch) => ch !== color).join(""));
+        return;
+      }
+      const shiftEdit = e.target.closest(".cc-shift-editbtn");
+      if (shiftEdit) {
+        shiftEditing.add(shiftEdit.dataset.name);
+        ccShiftOpenFor = shiftEdit.dataset.name;
+        renderCardArtGrid();
+        return;
+      }
+      const shiftClear = e.target.closest(".cc-shift-clear");
+      if (shiftClear) { clearStagedShift(shiftClear.dataset.name); return; }
       const face = e.target.closest(".ca-face");
       if (!face) return;
       const { name, face: f } = face.dataset;
@@ -1871,7 +2032,10 @@ function wireCardArt() {
         setFaceOverride(name, f, inp ? inp.value : "");
       } else if (e.target.closest(".ca-stage")) {
         const inp = face.querySelector(".ca-input");
-        stageFaceOverride(name, f, inp ? inp.value : "");
+        const val = inp ? inp.value : "";
+        if (inp) inp.value = "";                       // clear so the tile collapses out of "modifying"
+        shiftEditing.delete(name); ccShiftOpenFor = null;   // and the shift editor collapses to its badge
+        stageFaceOverride(name, f, val);
       } else if (e.target.closest(".ca-publish")) {
         publishStagedFace(name, f);
       } else if (e.target.closest(".ca-discard-staged")) {
@@ -1884,6 +2048,15 @@ function wireCardArt() {
     grid.addEventListener("change", (e) => {
       const cb = e.target.closest(".ca-partner-check");
       if (cb) setPartnerFlag(cb.dataset.name, cb.checked);
+    });
+    // Typing an art URL marks the card as "being modified" → reveal its shift-to
+    // editor (CSS). No re-render (keeps focus); just toggle the class.
+    grid.addEventListener("input", (e) => {
+      if (!e.target.closest(".ca-input")) return;
+      const item = e.target.closest(".ca-item");
+      if (!item) return;
+      const anyVal = [...item.querySelectorAll(".ca-input")].some((i) => i.value.trim() !== "");
+      item.classList.toggle("modifying", anyVal);
     });
     grid.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || !e.target.classList.contains("ca-input")) return;
@@ -1909,12 +2082,21 @@ function wireCardArt() {
       const data = (dt.getData("text/uri-list") || dt.getData("text/plain") || "").trim();
       setFaceOverride(face.dataset.name, face.dataset.face, data);
     });
-    // Click anywhere outside an open color editor closes its picker (clicks inside
-    // it — the +, a pick, a pip — keep it open so you can multi-select in one go).
+    // Click anywhere outside an editor closes its picker (clicks inside — the +, a
+    // pick, a pip — keep it open so you can multi-select in one go). For the shift
+    // editor, clicking away also collapses an "Edit staging" expansion back to its badge.
     document.addEventListener("click", (e) => {
-      if (!ccOpenFor || e.target.closest(".cc-editor")) return;
-      ccOpenFor = null;
-      grid.querySelectorAll(".cc-picker").forEach((p) => { p.hidden = true; });
+      if (ccOpenFor && !e.target.closest(".cc-editor")) {
+        ccOpenFor = null;
+        grid.querySelectorAll(".cc-picker").forEach((p) => { p.hidden = true; });
+      }
+      if (!e.target.closest(".cc-shift")) {
+        const wasEditing = shiftEditing.size > 0;
+        ccShiftOpenFor = null;
+        shiftEditing.clear();
+        if (wasEditing) renderCardArtGrid();   // collapse expanded staged cards back to badges
+        else grid.querySelectorAll(".cc-shift-picker").forEach((p) => { p.hidden = true; });
+      }
     });
   }
   if ($("caSearch")) $("caSearch").addEventListener("input", renderCardArtGrid);
@@ -2033,6 +2215,7 @@ function boot() {
     cardMetaOverrides = readLocalCardMeta();
     cardStatusOverrides = readLocalCardStatus();
     cardColorOverrides = readLocalCardColors();
+    cardColorStaged = readLocalCardColorStaged();
     poolChangeOverrides = readLocalPoolChanges();
     applyCustomCards(readLocalCustomCards());
   }

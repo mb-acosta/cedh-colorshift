@@ -104,6 +104,17 @@
         "$other": { ".validate": false }
       }
     },
+    "cardColorsStaged": {
+      ".read": true,
+      ".write": true,
+      "$key": {
+        ".validate": "newData.hasChild('colors')",
+        "colors": { ".validate": "newData.isString() && newData.val().matches(/^(W?U?B?R?G?)$/)" },
+        "ts": { ".validate": "newData.isNumber()" },
+        "by": { ".validate": "newData.isString()" },
+        "$other": { ".validate": false }
+      }
+    },
     "poolChanges": {
       ".read": true,
       ".write": true,

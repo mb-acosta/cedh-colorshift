@@ -439,6 +439,34 @@ button.cc-pip:hover { outline: 2px solid var(--err); outline-offset: 1px; }
 .cc-picker { display: inline-flex; gap: 4px; align-items: center; }
 .cc-picker[hidden] { display: none; }
 
+/* Staged "shift to" editor (color-shifted league). Hidden unless the card is being
+   modified (a new art URL typed → .modifying), has a staged shift (.has-shift), or
+   is being edited (.editing). Full editor while modifying/editing; compact badge otherwise. */
+.cc-shift { display: none; align-items: center; gap: 6px; flex-wrap: wrap; flex-basis: 100%;
+  font-size: .76rem; color: var(--muted); margin-top: 4px; padding-top: 4px; border-top: 1px dashed rgba(231,193,74,.25); }
+.ca-item.modifying .cc-shift, .ca-item.editing .cc-shift, .ca-item.has-shift .cc-shift { display: inline-flex; }
+.cc-shift-full { display: none; align-items: center; gap: 6px; }
+.ca-item.modifying .cc-shift-full, .ca-item.editing .cc-shift-full { display: inline-flex; }
+.cc-shift-badge { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.ca-item.modifying .cc-shift-badge, .ca-item.editing .cc-shift-badge { display: none; }
+.cc-shift-label { color: var(--gold); }
+.cc-shift-to { display: inline-flex; gap: 3px; align-items: center; }
+.cc-shift-add { width: 20px; height: 20px; border-radius: 999px; cursor: pointer; font-size: .85rem; line-height: 1;
+  background: var(--panel2); color: var(--ink); border: 1px solid rgba(255,255,255,.2); }
+.cc-shift-add:hover { border-color: var(--gold); }
+.cc-shift-picker { display: inline-flex; gap: 4px; align-items: center; }
+.cc-shift-picker[hidden] { display: none; }
+.cc-shift-pick, .cc-shift-pip { background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  display: inline-flex; align-items: center; line-height: 1; border-radius: 999px; }
+.cc-shift-pick .ms-cost, .cc-shift-pip .ms-cost, .cc-shift-to .ms-cost, .cc-shift-badge .ms-cost { font-size: 16px; }
+button.cc-shift-pip:hover { outline: 2px solid var(--err); outline-offset: 1px; }
+.cc-shift-pick:hover { outline: 2px solid var(--gold); outline-offset: 1px; }
+.cc-shift-editbtn, .cc-shift-clear { background: var(--panel2); color: var(--ink); border: 1px solid rgba(255,255,255,.18);
+  padding: 1px 8px; border-radius: 6px; font-size: .72rem; cursor: pointer; }
+.cc-shift-editbtn:hover { border-color: var(--gold); }
+.cc-shift-clear { color: #ff9a9a; border-color: rgba(255,120,120,.35); }
+.cc-shift-clear:hover { background: rgba(255,80,80,.12); border-color: rgba(255,120,120,.6); }
+
 /* Color-identity density tracker (admin page) */
 .cc-density-panel h3 { margin-top: 0; }
 .cc-density { display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
