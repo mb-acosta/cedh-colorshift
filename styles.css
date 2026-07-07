@@ -396,7 +396,10 @@ footer { max-width: 900px; margin: 0 auto; padding: 8px 24px 40px; color: var(--
 .ca-add #caAddBtn { background: var(--gold); color: #1a1500; border: none; }
 
 /* ── Admin page container ── */
-.admin-main { max-width: none; margin: 0; padding: 16px clamp(14px, 3vw, 40px) 60px; }
+/* Override the wheel page's two-column `main` grid: the admin page stacks its
+   panels full-width so the card grid gets the whole viewport and scales by its
+   own breakpoints. */
+.admin-main { display: block; max-width: none; margin: 0; padding: 16px clamp(14px, 3vw, 40px) 60px; }
 .admin-main .auth-row { margin-bottom: 14px; }
 
 /* ── Color identity: shared pips (admin editor, gallery, filter chips) ── */
