@@ -12,10 +12,10 @@
   <header>
     <h1>🔧 Commander Wheel — Admin</h1>
     <div class="header-right">
-      <a class="nav-link" href="index.html">← Wheel</a>
-      <a class="nav-link" href="leaderboard.html">🏆 Leaderboard</a>
-      <a class="nav-link" href="gallery.html">📖 Card reference</a>
       <button class="nav-link" id="rulesBtn" type="button">📜 Rules</button>
+      <a class="nav-link" href="leaderboard.html">🏆 Leaderboard</a>
+      <a class="nav-link" href="index.html">← Wheel</a>
+      <a class="nav-link" href="gallery.html">📖 Card reference</a>
       <div id="status" class="status">connecting…</div>
     </div>
   </header>
@@ -164,8 +164,8 @@
     <section class="admin-tabpanel" data-tabpanel="rules" hidden>
     <div id="rulesPanel" class="admin-panel">
       <h3>League rules</h3>
-      <p class="admin-hint">Shown to everyone via the 📜 Rules button in the header. Edit here and Save to update it for all players.</p>
-      <textarea id="rulesEdit" class="rules-edit" rows="8" placeholder="Type the league rules here…"></textarea>
+      <p class="admin-hint">Shown to everyone via the 📜 Rules button in the header. <b>Markdown</b> is supported — <code># headings</code>, <code>**bold**</code>, <code>*italic*</code>, <code>- lists</code>, <code>[links](https://…)</code>. Edit here and Save to update it for all players.</p>
+      <textarea id="rulesEdit" class="rules-edit" rows="10" placeholder="Type the league rules here — Markdown supported (# heading, **bold**, - list, [link](https://…))…"></textarea>
       <div class="rules-edit-row">
         <button id="rulesSaveBtn" type="button">Save rules</button>
         <span id="rulesMsg" class="auth-msg"></span>

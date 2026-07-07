@@ -545,7 +545,19 @@ button.nav-link { background: none; font: inherit; cursor: pointer; line-height:
 .modal-close { position: absolute; top: 10px; right: 12px; background: none; border: 0; color: var(--muted);
   font-size: 1.1rem; cursor: pointer; }
 .modal-close:hover { color: var(--ink); }
-.rules-body { white-space: pre-wrap; line-height: 1.55; color: var(--ink); font-size: .95rem; }
+.rules-body { line-height: 1.55; color: var(--ink); font-size: .95rem; }
+.rules-body p { margin: 0 0 12px; }
+.rules-body h2 { font-size: 1.15rem; color: var(--gold); margin: 18px 0 8px; }
+.rules-body h3 { font-size: 1rem; color: var(--gold); margin: 16px 0 6px; }
+.rules-body h4 { font-size: .92rem; color: var(--ink); margin: 14px 0 6px; }
+.rules-body ul, .rules-body ol { margin: 0 0 12px; padding-left: 22px; }
+.rules-body li { margin: 3px 0; }
+.rules-body a { color: var(--gold); }
+.rules-body code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+.rules-body hr { border: none; border-top: 1px solid rgba(255,255,255,.15); margin: 14px 0; }
+.rules-body > :first-child { margin-top: 0; }
+.rules-body > :last-child { margin-bottom: 0; }
+.rules-empty { color: var(--muted); }
 
 /* ── Admin: rules editor ── */
 .rules-edit { width: 100%; box-sizing: border-box; resize: vertical; padding: 10px 12px; border-radius: 8px;
