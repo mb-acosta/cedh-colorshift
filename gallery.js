@@ -84,6 +84,7 @@ let cardMeta = {};          // encKey -> { partner }
 let customCards = {};       // encKey -> { name, back?, img, backImg? }
 let cardStatus = {};        // encKey -> { state }  — staged roster status
 let cardColors = {};        // encKey -> { colors }  — declared color identity ("" = colorless)
+let cardColorsStaged = {};  // encKey -> { colors }  — staged "shift to" identity (admin preview)
 let poolChanges = {};       // encKey -> { kind: "added"|"updated" }  — last store-event's changes
 let assignments = {};       // pushId -> { discord, uid, type, name|partnerA/partnerB }
 let session = null;         // { username, key } | null
@@ -123,6 +124,9 @@ function rebuild() {
     // Declared color identity ("" = colorless, undefined = untagged).
     const col = cardColors[enc];
     c.colors = (col && typeof col.colors === "string") ? col.colors : undefined;
+    // Staged "shift to" identity (admin preview): null = no pip change staged.
+    const scol = cardColorsStaged[enc];
+    c.stagedColors = (scol && typeof scol.colors === "string") ? scol.colors : null;
     // Last store-event marker ("added"|"updated"|null).
     const pc = poolChanges[enc];
     c.poolChange = (pc && (pc.kind === "added" || pc.kind === "updated")) ? pc.kind : null;
@@ -152,17 +156,27 @@ function itemHtml(c) {
     `</li>`;
 }
 
-// A staged art change (admin only), showing the NEW (staged) face(s) with a badge.
+// Badge for a staged update on an existing live card. A staged pip change makes it
+// a "color identity change" (showing the from → to pips); with no pip change it's
+// a plain "art update". withFaces notes which face(s) changed (admin preview only).
+function modTag(c, withFaces) {
+  if (c.stagedColors != null) {
+    return `<span class="g-tag pending">🔀 color identity change ` +
+      `${colorPipsHtml(c.colors)} → ${colorPipsHtml(c.stagedColors)}</span>`;
+  }
+  const which = [c.stagedImg ? "front" : null, c.stagedBackImg ? "back" : null].filter(Boolean).join(" & ");
+  return `<span class="g-tag pending">⏳ art update${withFaces && which ? ` (${which})` : ""}</span>`;
+}
+
+// A staged update (admin only), showing the NEW (staged) face(s) with a badge.
 function modItemHtml(c) {
   const frontId = c.stagedImg || c.img;
   const backId = c.stagedBackImg || c.backImg;
   const faces = face(frontId, c.name) + (backId ? face(backId, c.back || c.name) : "");
   const flip = c.back ? `<span class="g-flip">// ${escapeHtml(c.back)}</span>` : "";
-  const which = [c.stagedImg ? "front" : null, c.stagedBackImg ? "back" : null].filter(Boolean).join(" & ");
-  const tag = `<span class="g-tag pending">⏳ art change (${which})</span>`;
   return `<li class="g-item${backId ? " flip" : ""}">` +
     `<div class="g-faces">${faces}</div>` +
-    `<div class="g-name">${escapeHtml(c.name)}${flip}${tag}</div>` +
+    `<div class="g-name">${escapeHtml(c.name)}${flip}${modTag(c, true)}</div>` +
     `</li>`;
 }
 
@@ -172,7 +186,7 @@ function futureNameHtml(c, kind) {
   const partner = c.partner ? `<span class="g-tag">🤝 partner</span>` : "";
   const tag = kind === "add"
     ? `<span class="g-tag pending">⏳ coming soon</span>`
-    : `<span class="g-tag pending">⏳ art change</span>`;
+    : modTag(c, false);
   return `<li class="g-item names-only">` +
     `<div class="g-name">${escapeHtml(c.name)}${flip}${partner}${tag}</div></li>`;
 }
@@ -262,7 +276,8 @@ function render(filter = "") {
   // (not color-filtered — future additions are often untagged).
   const additions = display.filter((c) => c.status === "pending" && matchesFilter(c, q));
   const mods = display.filter((c) =>
-    (c.stagedImg || c.stagedBackImg) && c.status !== "pending" && c.status !== "hidden" && matchesFilter(c, q));
+    (c.stagedImg || c.stagedBackImg || c.stagedColors != null) &&
+    c.status !== "pending" && c.status !== "hidden" && matchesFilter(c, q));
   const futureHtml = isAdmin
     ? additions.map(itemHtml).concat(mods.map(modItemHtml))
     : additions.map((c) => futureNameHtml(c, "add")).concat(mods.map((c) => futureNameHtml(c, "mod")));
@@ -413,13 +428,14 @@ if (search) search.addEventListener("input", (e) => render(e.target.value));
     try { const res = await fetch(base + path); return res.ok ? (await res.json()) : null; }
     catch { return null; }
   };
-  const [imgs, staged, meta, custom, status, colors, changes, assigns, owner, rules] = await Promise.all([
+  const [imgs, staged, meta, custom, status, colors, colorsStaged, changes, assigns, owner, rules] = await Promise.all([
     fetchJson("/cardImages.json"),
     fetchJson("/cardImagesStaged.json"),
     fetchJson("/cardMeta.json"),
     fetchJson("/customCards.json"),
     fetchJson("/cardStatus.json"),
     fetchJson("/cardColors.json"),
+    fetchJson("/cardColorsStaged.json"),
     fetchJson("/poolChanges.json"),
     fetchJson(`/events/${EVENT_ID}/assignments.json`),
     fetchJson("/admin/owner.json"),
@@ -431,6 +447,7 @@ if (search) search.addEventListener("input", (e) => render(e.target.value));
   customCards = custom || {};
   cardStatus = status || {};
   cardColors = colors || {};
+  cardColorsStaged = colorsStaged || {};
   poolChanges = changes || {};
   assignments = assigns || {};
   session = getSession();
