@@ -157,15 +157,16 @@ function itemHtml(c) {
 }
 
 // Badge for a staged update on an existing live card. A staged pip change makes it
-// a "color identity change" (showing the from → to pips); with no pip change it's
-// a plain "art update". withFaces notes which face(s) changed (admin preview only).
+// a "Color Identity Change"; with no pip change it's a plain "Art Update". Admins
+// (withFaces) get the detail — the from → to pips and which face(s) changed; players
+// see only the change type, never what it's changing to.
 function modTag(c, withFaces) {
   if (c.stagedColors != null) {
-    return `<span class="g-tag pending">🔀 color identity change ` +
-      `${colorPipsHtml(c.colors)} → ${colorPipsHtml(c.stagedColors)}</span>`;
+    const pips = withFaces ? ` ${colorPipsHtml(c.colors)} → ${colorPipsHtml(c.stagedColors)}` : "";
+    return `<span class="g-tag pending">🔀 Color Identity Change${pips}</span>`;
   }
   const which = [c.stagedImg ? "front" : null, c.stagedBackImg ? "back" : null].filter(Boolean).join(" & ");
-  return `<span class="g-tag pending">⏳ art update${withFaces && which ? ` (${which})` : ""}</span>`;
+  return `<span class="g-tag pending">⏳ Art Update${withFaces && which ? ` (${which})` : ""}</span>`;
 }
 
 // A staged update (admin only), showing the NEW (staged) face(s) with a badge.
@@ -185,7 +186,7 @@ function futureNameHtml(c, kind) {
   const flip = c.back ? `<span class="g-flip">// ${escapeHtml(c.back)}</span>` : "";
   const partner = c.partner ? `<span class="g-tag">🤝 partner</span>` : "";
   const tag = kind === "add"
-    ? `<span class="g-tag pending">⏳ coming soon</span>`
+    ? `<span class="g-tag pending">⏳ Future Upload</span>`
     : modTag(c, false);
   return `<li class="g-item names-only">` +
     `<div class="g-name">${escapeHtml(c.name)}${flip}${partner}${tag}</div></li>`;
